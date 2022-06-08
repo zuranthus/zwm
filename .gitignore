@@ -1,0 +1,4 @@
+.envrc
+.vimrc
+zig-cache
+zig-out
