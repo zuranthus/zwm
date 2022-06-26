@@ -210,6 +210,7 @@ const Manager = struct {
         _ = c.XUnmapWindow(m.d, frame);
         _ = c.XReparentWindow(m.d, w, m.r, 0, 0);
         _ = c.XRemoveFromSaveSet(m.d, w);
+        _ = c.XDestroyWindow(m.d, frame);
         _ = m.clients.remove(w);
         logf("unframed window {} [{}]\n", .{ w, frame });
     }
