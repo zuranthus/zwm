@@ -1,7 +1,12 @@
 const std = @import("std");
 const c = @cImport({
     @cInclude("X11/Xlib.h");
+    @cInclude("X11/Xproto.h");
 });
+
+const textRed = "\x1b[31m";
+const textGray = "\x1b[90m";
+const textReset = "\x1b[0m";
 
 fn log(comptime s: []const u8) void {
     std.debug.print(s, .{});
@@ -9,6 +14,132 @@ fn log(comptime s: []const u8) void {
 
 fn logf(comptime s: []const u8, args: anytype) void {
     std.debug.print(s, args);
+}
+
+fn requestCodeToString(code: u8) ![]const u8 {
+    return switch (code) {
+        c.X_CreateWindow => "X_CreateWindow",
+        c.X_ChangeWindowAttributes => "X_ChangeWindowAttributes",
+        c.X_GetWindowAttributes => "X_GetWindowAttributes",
+        c.X_DestroyWindow => "X_DestroyWindow",
+        c.X_DestroySubwindows => "X_DestroySubwindows",
+        c.X_ChangeSaveSet => "X_ChangeSaveSet",
+        c.X_ReparentWindow => "X_ReparentWindow",
+        c.X_MapWindow => "X_MapWindow",
+        c.X_MapSubwindows => "X_MapSubwindows",
+        c.X_UnmapWindow => "X_UnmapWindow",
+        c.X_UnmapSubwindows => "X_UnmapSubwindows",
+        c.X_ConfigureWindow => "X_ConfigureWindow",
+        c.X_CirculateWindow => "X_CirculateWindow",
+        c.X_GetGeometry => "X_GetGeometry",
+        c.X_QueryTree => "X_QueryTree",
+        c.X_InternAtom => "X_InternAtom",
+        c.X_GetAtomName => "X_GetAtomName",
+        c.X_ChangeProperty => "X_ChangeProperty",
+        c.X_DeleteProperty => "X_DeleteProperty",
+        c.X_GetProperty => "X_GetProperty",
+        c.X_ListProperties => "X_ListProperties",
+        c.X_SetSelectionOwner => "X_SetSelectionOwner",
+        c.X_GetSelectionOwner => "X_GetSelectionOwner",
+        c.X_ConvertSelection => "X_ConvertSelection",
+        c.X_SendEvent => "X_SendEvent",
+        c.X_GrabPointer => "X_GrabPointer",
+        c.X_UngrabPointer => "X_UngrabPointer",
+        c.X_GrabButton => "X_GrabButton",
+        c.X_UngrabButton => "X_UngrabButton",
+        c.X_ChangeActivePointerGrab => "X_ChangeActivePointerGrab",
+        c.X_GrabKeyboard => "X_GrabKeyboard",
+        c.X_UngrabKeyboard => "X_UngrabKeyboard",
+        c.X_GrabKey => "X_GrabKey",
+        c.X_UngrabKey => "X_UngrabKey",
+        c.X_AllowEvents => "X_AllowEvents",
+        c.X_GrabServer => "X_GrabServer",
+        c.X_UngrabServer => "X_UngrabServer",
+        c.X_QueryPointer => "X_QueryPointer",
+        c.X_GetMotionEvents => "X_GetMotionEvents",
+        c.X_TranslateCoords => "X_TranslateCoords",
+        c.X_WarpPointer => "X_WarpPointer",
+        c.X_SetInputFocus => "X_SetInputFocus",
+        c.X_GetInputFocus => "X_GetInputFocus",
+        c.X_QueryKeymap => "X_QueryKeymap",
+        c.X_OpenFont => "X_OpenFont",
+        c.X_CloseFont => "X_CloseFont",
+        c.X_QueryFont => "X_QueryFont",
+        c.X_QueryTextExtents => "X_QueryTextExtents",
+        c.X_ListFonts => "X_ListFonts",
+        c.X_ListFontsWithInfo => "X_ListFontsWithInfo",
+        c.X_SetFontPath => "X_SetFontPath",
+        c.X_GetFontPath => "X_GetFontPath",
+        c.X_CreatePixmap => "X_CreatePixmap",
+        c.X_FreePixmap => "X_FreePixmap",
+        c.X_CreateGC => "X_CreateGC",
+        c.X_ChangeGC => "X_ChangeGC",
+        c.X_CopyGC => "X_CopyGC",
+        c.X_SetDashes => "X_SetDashes",
+        c.X_SetClipRectangles => "X_SetClipRectangles",
+        c.X_FreeGC => "X_FreeGC",
+        c.X_ClearArea => "X_ClearArea",
+        c.X_CopyArea => "X_CopyArea",
+        c.X_CopyPlane => "X_CopyPlane",
+        c.X_PolyPoint => "X_PolyPoint",
+        c.X_PolyLine => "X_PolyLine",
+        c.X_PolySegment => "X_PolySegment",
+        c.X_PolyRectangle => "X_PolyRectangle",
+        c.X_PolyArc => "X_PolyArc",
+        c.X_FillPoly => "X_FillPoly",
+        c.X_PolyFillRectangle => "X_PolyFillRectangle",
+        c.X_PolyFillArc => "X_PolyFillArc",
+        c.X_PutImage => "X_PutImage",
+        c.X_GetImage => "X_GetImage",
+        c.X_PolyText8 => "X_PolyText8",
+        c.X_PolyText16 => "X_PolyText16",
+        c.X_ImageText8 => "X_ImageText8",
+        c.X_ImageText16 => "X_ImageText16",
+        c.X_CreateColormap => "X_CreateColormap",
+        c.X_FreeColormap => "X_FreeColormap",
+        c.X_CopyColormapAndFree => "X_CopyColormapAndFree",
+        c.X_InstallColormap => "X_InstallColormap",
+        c.X_UninstallColormap => "X_UninstallColormap",
+        c.X_ListInstalledColormaps => "X_ListInstalledColormaps",
+        c.X_AllocColor => "X_AllocColor",
+        c.X_AllocNamedColor => "X_AllocNamedColor",
+        c.X_AllocColorCells => "X_AllocColorCells",
+        c.X_AllocColorPlanes => "X_AllocColorPlanes",
+        c.X_FreeColors => "X_FreeColors",
+        c.X_StoreColors => "X_StoreColors",
+        c.X_StoreNamedColor => "X_StoreNamedColor",
+        c.X_QueryColors => "X_QueryColors",
+        c.X_LookupColor => "X_LookupColor",
+        c.X_CreateCursor => "X_CreateCursor",
+        c.X_CreateGlyphCursor => "X_CreateGlyphCursor",
+        c.X_FreeCursor => "X_FreeCursor",
+        c.X_RecolorCursor => "X_RecolorCursor",
+        c.X_QueryBestSize => "X_QueryBestSize",
+        c.X_QueryExtension => "X_QueryExtension",
+        c.X_ListExtensions => "X_ListExtensions",
+        c.X_ChangeKeyboardMapping => "X_ChangeKeyboardMapping",
+        c.X_GetKeyboardMapping => "X_GetKeyboardMapping",
+        c.X_ChangeKeyboardControl => "X_ChangeKeyboardControl",
+        c.X_GetKeyboardControl => "X_GetKeyboardControl",
+        c.X_Bell => "X_Bell",
+        c.X_ChangePointerControl => "X_ChangePointerControl",
+        c.X_GetPointerControl => "X_GetPointerControl",
+        c.X_SetScreenSaver => "X_SetScreenSaver",
+        c.X_GetScreenSaver => "X_GetScreenSaver",
+        c.X_ChangeHosts => "X_ChangeHosts",
+        c.X_ListHosts => "X_ListHosts",
+        c.X_SetAccessControl => "X_SetAccessControl",
+        c.X_SetCloseDownMode => "X_SetCloseDownMode",
+        c.X_KillClient => "X_KillClient",
+        c.X_RotateProperties => "X_RotateProperties",
+        c.X_ForceScreenSaver => "X_ForceScreenSaver",
+        c.X_SetPointerMapping => "X_SetPointerMapping",
+        c.X_GetPointerMapping => "X_GetPointerMapping",
+        c.X_SetModifierMapping => "X_SetModifierMapping",
+        c.X_GetModifierMapping => "X_GetModifierMapping",
+        c.X_NoOperation => "X_NoOperation",
+        else => return ZwmErrors.Error,
+    };
 }
 
 const event_name = [_][]const u8{
@@ -87,6 +218,7 @@ const Manager = struct {
         _ = c.XSelectInput(m.d, m.r, c.SubstructureRedirectMask | c.SubstructureNotifyMask);
         _ = c.XSync(m.d, 0);
         if (Manager.ce) |err| return err;
+
         _ = c.XSetErrorHandler(on_xerror);
 
         _ = c.XGrabServer(m.d);
@@ -97,8 +229,8 @@ const Manager = struct {
         var ws: [*c]c.Window = undefined;
         var nws: c_uint = 0;
         _ = c.XQueryTree(m.d, m.r, &root, &parent, &ws, &nws);
-        std.debug.assert(root == m.r);
         defer _ = c.XFree(ws);
+        std.debug.assert(root == m.r);
 
         var i: usize = 0;
         while (i < nws) : (i += 1) {
@@ -112,7 +244,7 @@ const Manager = struct {
             var e: c.XEvent = undefined;
             _ = c.XNextEvent(m.d, &e);
             const ename = event_name[@intCast(usize, e.type)];
-            logf("received event {s}\n", .{ename});
+            logf("{s}received event {s}{s}\n", .{ textGray, ename, textReset });
             try switch (e.type) {
                 c.CreateNotify => m._OnCreateNotify(e.xcreatewindow),
                 c.DestroyNotify => m._OnDestroyNotify(e.xdestroywindow),
@@ -121,41 +253,41 @@ const Manager = struct {
                 c.UnmapNotify => m._OnUnmapNotify(e.xunmap),
                 c.ConfigureRequest => m._OnConfigureRequest(e.xconfigurerequest),
                 c.MapRequest => m._OnMapRequest(e.xmaprequest),
-                else => logf("ignored event {s}\n", .{ename}),
+                else => logf("{s}ignored event {s}{s}\n", .{ textGray, ename, textReset }),
             };
         }
     }
 
     fn _OnCreateNotify(_: *Manager, ev: c.XCreateWindowEvent) !void {
-        logf("CreateNotify for {}\n", .{ev.window});
+        logf("{s}(i) CreateNotify for {}{s}\n", .{ textGray, ev.window, textReset });
     }
 
     fn _OnDestroyNotify(_: *Manager, ev: c.XDestroyWindowEvent) !void {
-        logf("DestroyNotify for {}\n", .{ev.window});
+        logf("{s}(i) DestroyNotify for {}{s}\n", .{ textGray, ev.window, textReset });
     }
 
     fn _OnReparentNotify(_: *Manager, ev: c.XReparentEvent) !void {
-        logf("ReparentNotify for {} to {}\n", .{ ev.window, ev.parent });
+        logf("{s}(i) ReparentNotify for {} to {}{s}\n", .{ textGray, ev.window, ev.parent, textReset });
     }
 
     fn _OnMapNotify(_: *Manager, ev: c.XMapEvent) !void {
-        logf("MapNotify for {}\n", .{ev.window});
+        logf("{s}(i) MapNotify for {}{s}\n", .{ textGray, ev.window, textReset });
     }
 
     fn _OnUnmapNotify(m: *Manager, ev: c.XUnmapEvent) !void {
-        logf("UnmapNotify for {}\n", .{ev.window});
+        logf("{s}UnmapNotify for {}{s}\n", .{ textGray, ev.window, textReset });
         const w = ev.window;
-        if (m.clients.get(w) == null) {
-            logf("ignore UnmapNotify for non-client window {}\n", .{w});
-        } else if (ev.event == m.r) {
-            logf("ignore UnmapNotify for reparented pre-existing window {}\n", .{w});
+        if (ev.event == m.r) {
+            logf("{s}(i) ignore UnmapNotify for reparented pre-existing window {}{s}\n", .{ textGray, w, textReset });
+        } else if (m.clients.get(w) == null) {
+            logf("{s}(i) ignore UnmapNotify for non-client window {}{s}\n", .{ textGray, w, textReset });
         } else {
             try m.unframeWindow(w);
         }
     }
 
     fn _OnConfigureRequest(m: *Manager, ev: c.XConfigureRequestEvent) !void {
-        logf("ConfigureRequest for {}\n", .{ev.window});
+        logf("{s}ConfigureRequest for {}{s}\n", .{ textGray, ev.window, textReset });
         var changes = c.XWindowChanges{
             .x = ev.x,
             .y = ev.y,
@@ -181,7 +313,6 @@ const Manager = struct {
 
         var wattr: c.XWindowAttributes = undefined;
         if (c.XGetWindowAttributes(m.d, w, &wattr) == 0) return ZwmErrors.Error;
-
         if (wo == WindowOrigin.CreatedBeforeWM and ((wattr.override_redirect != 0 or wattr.map_state != c.IsViewable))) {
             return;
         }
@@ -216,7 +347,7 @@ const Manager = struct {
     }
 
     fn _OnMapRequest(m: *Manager, ev: c.XMapRequestEvent) !void {
-        logf("MapRequest for {}\n", .{ev.window});
+        logf("{s}MapRequest for {}{s}\n", .{ textGray, ev.window, textReset });
         try m.frameWindow(ev.window, WindowOrigin.CreatedAfterWM);
         _ = c.XMapWindow(m.d, ev.window);
     }
@@ -237,7 +368,13 @@ const Manager = struct {
         const e: *c.XErrorEvent = err;
         var error_text: [1024:0]u8 = undefined;
         _ = c.XGetErrorText(d, e.error_code, @ptrCast([*c]u8, &error_text), @sizeOf(@TypeOf(error_text)));
-        logf("error {s}\n", .{error_text});
+        logf("{s}ErrorEvent: request '{s}' xid {x}, error text '{s}'{s}\n", .{
+            textRed,
+            requestCodeToString(e.request_code),
+            e.resourceid,
+            error_text,
+            textReset,
+        });
         Manager.ce = ZwmErrors.Error;
         return 0;
     }
