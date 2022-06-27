@@ -13,7 +13,7 @@ fn logColor(
 ) void {
     print("{s}{s} ", .{ col, cat });
     print(s, args);
-    print("{s}", .{textReset});
+    print("\n{s}", .{textReset});
 }
 
 pub fn trace(comptime s: []const u8, args: anytype) void {
