@@ -1,26 +1,25 @@
 const std = @import("std");
-const c = @import("x11.zig");
-const util = @import("util.zig");
+const x11 = @import("x11.zig");
 const log = @import("./log.zig");
 
 pub const Manager = struct {
-    d: *c.Display,
-    root: c.Window,
-    clients: std.AutoHashMap(c.Window, c.Window),
+    d: *x11.Display,
+    root: x11.Window,
+    clients: std.AutoHashMap(x11.Window, x11.Window),
 
     pub fn init(display: ?[]u8) !Manager {
         _ = display;
-        const d = c.XOpenDisplay(":1") orelse return error.CannotOpenDisplay;
-        const r = c.XDefaultRootWindow(d);
+        const d = x11.XOpenDisplay(":1") orelse return error.CannotOpenDisplay;
+        const r = x11.XDefaultRootWindow(d);
         return Manager{
             .d = d,
             .root = r,
-            .clients = std.AutoHashMap(c.Window, c.Window).init(std.heap.c_allocator),
+            .clients = std.AutoHashMap(x11.Window, x11.Window).init(std.heap.c_allocator),
         };
     }
 
     pub fn deinit(m: *Manager) void {
-        _ = c.XCloseDisplay(m.d);
+        _ = x11.XCloseDisplay(m.d);
         // TODO deinit clients
         m.clients.deinit();
         log.info("destroyed wm", .{});
@@ -35,22 +34,22 @@ pub const Manager = struct {
     var isWmDetected = false;
 
     fn initWm(m: *Manager) !void {
-        _ = c.XSetErrorHandler(onWmDetected);
-        _ = c.XSelectInput(m.d, m.root, c.SubstructureRedirectMask | c.SubstructureNotifyMask);
-        _ = c.XSync(m.d, 0);
+        _ = x11.XSetErrorHandler(onWmDetected);
+        _ = x11.XSelectInput(m.d, m.root, x11.SubstructureRedirectMask | x11.SubstructureNotifyMask);
+        _ = x11.XSync(m.d, 0);
         if (Manager.isWmDetected) return error.AnotherWmDetected;
 
-        _ = c.XSetErrorHandler(onXError);
+        _ = x11.XSetErrorHandler(onXError);
 
-        _ = c.XGrabServer(m.d);
-        defer _ = c.XUngrabServer(m.d);
+        _ = x11.XGrabServer(m.d);
+        defer _ = x11.XUngrabServer(m.d);
 
-        var root: c.Window = undefined;
-        var parent: c.Window = undefined;
-        var ws: [*c]c.Window = undefined;
+        var root: x11.Window = undefined;
+        var parent: x11.Window = undefined;
+        var ws: [*c]x11.Window = undefined;
         var nws: c_uint = 0;
-        _ = c.XQueryTree(m.d, m.root, &root, &parent, &ws, &nws);
-        defer _ = c.XFree(ws);
+        _ = x11.XQueryTree(m.d, m.root, &root, &parent, &ws, &nws);
+        defer _ = x11.XFree(ws);
         std.debug.assert(root == m.root);
 
         var i: usize = 0;
@@ -62,58 +61,58 @@ pub const Manager = struct {
 
     fn startEventLoop(m: *Manager) !void {
         while (true) {
-            var e: c.XEvent = undefined;
-            _ = c.XNextEvent(m.d, &e);
-            const ename = util.xEventTypeToString(@intCast(u8, e.type));
+            var e: x11.XEvent = undefined;
+            _ = x11.XNextEvent(m.d, &e);
+            const ename = x11.eventTypeToString(@intCast(u8, e.type));
             try switch (e.type) {
-                c.CreateNotify => m.onCreateNotify(e.xcreatewindow),
-                c.DestroyNotify => m.onDestroyNotify(e.xdestroywindow),
-                c.ReparentNotify => m.onReparentNotify(e.xreparent),
-                c.MapNotify => m.onMapNotify(e.xmap),
-                c.UnmapNotify => m.onUnmapNotify(e.xunmap),
-                c.ConfigureRequest => m.onConfigureRequest(e.xconfigurerequest),
-                c.MapRequest => m.onMapRequest(e.xmaprequest),
+                x11.CreateNotify => m.onCreateNotify(e.xcreatewindow),
+                x11.DestroyNotify => m.onDestroyNotify(e.xdestroywindow),
+                x11.ReparentNotify => m.onReparentNotify(e.xreparent),
+                x11.MapNotify => m.onMapNotify(e.xmap),
+                x11.UnmapNotify => m.onUnmapNotify(e.xunmap),
+                x11.ConfigureRequest => m.onConfigureRequest(e.xconfigurerequest),
+                x11.MapRequest => m.onMapRequest(e.xmaprequest),
                 else => log.trace("ignored event {s}", .{ename}),
             };
         }
     }
 
-    fn onWmDetected(_: ?*c.Display, err: [*c]c.XErrorEvent) callconv(.C) c_int {
-        const e: *c.XErrorEvent = err;
-        std.debug.assert(e.error_code == c.BadAccess);
+    fn onWmDetected(_: ?*x11.Display, err: [*c]x11.XErrorEvent) callconv(.C) c_int {
+        const e: *x11.XErrorEvent = err;
+        std.debug.assert(e.error_code == x11.BadAccess);
         Manager.isWmDetected = true;
         return 0;
     }
 
-    fn onXError(d: ?*c.Display, err: [*c]c.XErrorEvent) callconv(.C) c_int {
-        const e: *c.XErrorEvent = err;
+    fn onXError(d: ?*x11.Display, err: [*c]x11.XErrorEvent) callconv(.C) c_int {
+        const e: *x11.XErrorEvent = err;
         var error_text: [1024:0]u8 = undefined;
-        _ = c.XGetErrorText(d, e.error_code, @ptrCast([*c]u8, &error_text), @sizeOf(@TypeOf(error_text)));
+        _ = x11.XGetErrorText(d, e.error_code, @ptrCast([*c]u8, &error_text), @sizeOf(@TypeOf(error_text)));
         log.err("ErrorEvent: request '{s}' xid {x}, error text '{s}'", .{
-            util.xRequestCodeToString(e.request_code),
+            x11.requestCodeToString(e.request_code),
             e.resourceid,
             error_text,
         });
         return 0;
     }
 
-    fn onCreateNotify(_: *Manager, ev: c.XCreateWindowEvent) !void {
+    fn onCreateNotify(_: *Manager, ev: x11.XCreateWindowEvent) !void {
         log.trace("CreateNotify for {}", .{ev.window});
     }
 
-    fn onDestroyNotify(_: *Manager, ev: c.XDestroyWindowEvent) !void {
+    fn onDestroyNotify(_: *Manager, ev: x11.XDestroyWindowEvent) !void {
         log.trace("DestroyNotify for {}", .{ev.window});
     }
 
-    fn onReparentNotify(_: *Manager, ev: c.XReparentEvent) !void {
+    fn onReparentNotify(_: *Manager, ev: x11.XReparentEvent) !void {
         log.trace("ReparentNotify for {} to {}", .{ ev.window, ev.parent });
     }
 
-    fn onMapNotify(_: *Manager, ev: c.XMapEvent) !void {
+    fn onMapNotify(_: *Manager, ev: x11.XMapEvent) !void {
         log.trace("MapNotify for {}", .{ev.window});
     }
 
-    fn onUnmapNotify(m: *Manager, ev: c.XUnmapEvent) !void {
+    fn onUnmapNotify(m: *Manager, ev: x11.XUnmapEvent) !void {
         log.trace("UnmapNotify for {}", .{ev.window});
         const w = ev.window;
         if (ev.event == m.root) {
@@ -125,9 +124,9 @@ pub const Manager = struct {
         }
     }
 
-    fn onConfigureRequest(m: *Manager, ev: c.XConfigureRequestEvent) !void {
+    fn onConfigureRequest(m: *Manager, ev: x11.XConfigureRequestEvent) !void {
         log.trace("ConfigureRequest for {}", .{ev.window});
-        var changes = c.XWindowChanges{
+        var changes = x11.XWindowChanges{
             .x = ev.x,
             .y = ev.y,
             .width = ev.width,
@@ -141,28 +140,28 @@ pub const Manager = struct {
             w = frame;
             log.info("resizing frame, ", .{});
         }
-        _ = c.XConfigureWindow(m.d, w, @intCast(c_uint, ev.value_mask), &changes);
+        _ = x11.XConfigureWindow(m.d, w, @intCast(c_uint, ev.value_mask), &changes);
         log.info("resize {} to ({}, {})", .{ w, changes.width, changes.height });
     }
 
-    fn onMapRequest(m: *Manager, ev: c.XMapRequestEvent) !void {
+    fn onMapRequest(m: *Manager, ev: x11.XMapRequestEvent) !void {
         log.trace("MapRequest for {}", .{ev.window});
         try m.frameWindow(ev.window, WindowOrigin.CreatedAfterWM);
-        _ = c.XMapWindow(m.d, ev.window);
+        _ = x11.XMapWindow(m.d, ev.window);
     }
 
-    fn frameWindow(m: *Manager, w: c.Window, wo: WindowOrigin) !void {
+    fn frameWindow(m: *Manager, w: x11.Window, wo: WindowOrigin) !void {
         const border_width = 3;
         const border_color = 0xff0000;
         const bg_color = 0x0000ff;
 
-        var wattr: c.XWindowAttributes = undefined;
-        if (c.XGetWindowAttributes(m.d, w, &wattr) == 0) return error.Error;
-        if (wo == WindowOrigin.CreatedBeforeWM and ((wattr.override_redirect != 0 or wattr.map_state != c.IsViewable))) {
+        var wattr: x11.XWindowAttributes = undefined;
+        if (x11.XGetWindowAttributes(m.d, w, &wattr) == 0) return error.Error;
+        if (wo == WindowOrigin.CreatedBeforeWM and ((wattr.override_redirect != 0 or wattr.map_state != x11.IsViewable))) {
             return;
         }
 
-        const frame = c.XCreateSimpleWindow(
+        const frame = x11.XCreateSimpleWindow(
             m.d,
             m.root,
             wattr.x,
@@ -173,20 +172,20 @@ pub const Manager = struct {
             border_color,
             bg_color,
         );
-        _ = c.XSelectInput(m.d, frame, c.SubstructureRedirectMask | c.SubstructureNotifyMask);
-        _ = c.XAddToSaveSet(m.d, w);
-        _ = c.XReparentWindow(m.d, w, frame, 0, 0);
-        _ = c.XMapWindow(m.d, frame);
+        _ = x11.XSelectInput(m.d, frame, x11.SubstructureRedirectMask | x11.SubstructureNotifyMask);
+        _ = x11.XAddToSaveSet(m.d, w);
+        _ = x11.XReparentWindow(m.d, w, frame, 0, 0);
+        _ = x11.XMapWindow(m.d, frame);
         try m.clients.put(w, frame);
         log.info("framed window {} [{}]", .{ w, frame });
     }
 
-    fn unframeWindow(m: *Manager, w: c.Window) !void {
+    fn unframeWindow(m: *Manager, w: x11.Window) !void {
         const frame = m.clients.get(w) orelse return error.WindowIsNotClient;
-        _ = c.XUnmapWindow(m.d, frame);
-        _ = c.XReparentWindow(m.d, w, m.root, 0, 0);
-        _ = c.XRemoveFromSaveSet(m.d, w);
-        _ = c.XDestroyWindow(m.d, frame);
+        _ = x11.XUnmapWindow(m.d, frame);
+        _ = x11.XReparentWindow(m.d, w, m.root, 0, 0);
+        _ = x11.XRemoveFromSaveSet(m.d, w);
+        _ = x11.XDestroyWindow(m.d, frame);
         _ = m.clients.remove(w);
         log.info("unframed window {} [{}]", .{ w, frame });
     }
