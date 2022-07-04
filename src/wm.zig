@@ -37,6 +37,7 @@ pub const Manager = struct {
     var isInstanceAlive = false;
     var isWmDetected = false;
     const WindowOrigin = enum { CreatedBeforeWM, CreatedAfterWM };
+    const modKey = x11.Mod4Mask;
 
     fn initWm(m: *Manager) !void {
         _ = x11.XSetErrorHandler(onWmDetected);
@@ -77,6 +78,14 @@ pub const Manager = struct {
                 x11.UnmapNotify => m.onUnmapNotify(e.xunmap),
                 x11.ConfigureRequest => m.onConfigureRequest(e.xconfigurerequest),
                 x11.MapRequest => m.onMapRequest(e.xmaprequest),
+                x11.ButtonPress => m.onButtonPress(e.xbutton),
+                x11.ButtonRelease => m.onButtonRelease(e.xbutton),
+                x11.MotionNotify => {
+                    while (x11.XCheckTypedWindowEvent(m.d, e.xmotion.window, x11.MotionNotify, &e) != 0) {}
+                    try m.onMotionNotify(e.xmotion);
+                },
+                x11.KeyPress => m.onKeyPress(e.xkey),
+                x11.KeyRelease => m.onKeyRelease(e.xkey),
                 else => log.trace("ignored event {s}", .{ename}),
             };
         }
@@ -118,12 +127,13 @@ pub const Manager = struct {
     }
 
     fn onUnmapNotify(m: *Manager, ev: x11.XUnmapEvent) !void {
-        log.trace("UnmapNotify for {}", .{ev.window});
         const w = ev.window;
-        if (ev.event == m.root) {
-            log.trace("ignore UnmapNotify for reparented pre-existing window {}", .{w});
-        } else if (m.clients.get(w) == null) {
+        log.trace("UnmapNotify for {}", .{w});
+
+        if (m.clients.get(w) == null) {
             log.trace("ignore UnmapNotify for non-client window {}", .{w});
+        } else if (ev.event == m.root) {
+            log.trace("ignore UnmapNotify for reparented pre-existing window {}", .{w});
         } else {
             try m.unframeWindow(w);
         }
@@ -142,8 +152,8 @@ pub const Manager = struct {
         };
         var w = ev.window;
         if (m.clients.get(w)) |frame| {
-            w = frame;
-            log.info("resizing frame, ", .{});
+            _ = x11.XConfigureWindow(m.d, frame, @intCast(c_uint, ev.value_mask), &changes);
+            log.info("resize frame {} to ({}, {})", .{ frame, ev.width, ev.height });
         }
         _ = x11.XConfigureWindow(m.d, w, @intCast(c_uint, ev.value_mask), &changes);
         log.info("resize {} to ({}, {})", .{ w, changes.width, changes.height });
@@ -156,6 +166,8 @@ pub const Manager = struct {
     }
 
     fn frameWindow(m: *Manager, w: x11.Window, wo: WindowOrigin) !void {
+        if (m.clients.get(w) != null) return error.WindowAlreadyClient;
+
         const border_width = 3;
         const border_color = 0xff0000;
         const bg_color = 0x0000ff;
@@ -182,6 +194,53 @@ pub const Manager = struct {
         _ = x11.XReparentWindow(m.d, w, frame, 0, 0);
         _ = x11.XMapWindow(m.d, frame);
         try m.clients.put(w, frame);
+
+        // move with mod + LB
+        _ = x11.XGrabButton(
+            m.d,
+            x11.Button1,
+            modKey,
+            w,
+            0,
+            x11.ButtonPressMask | x11.ButtonReleaseMask | x11.ButtonMotionMask,
+            x11.GrabModeAsync,
+            x11.GrabModeAsync,
+            x11.None,
+            x11.None,
+        );
+        // resize with mod + RB
+        _ = x11.XGrabButton(
+            m.d,
+            x11.Button3,
+            modKey,
+            w,
+            0,
+            x11.ButtonPressMask | x11.ButtonReleaseMask | x11.ButtonMotionMask,
+            x11.GrabModeAsync,
+            x11.GrabModeAsync,
+            x11.None,
+            x11.None,
+        );
+        // kill with mod + C
+        _ = x11.XGrabKey(
+            m.d,
+            x11.XKeysymToKeycode(m.d, x11.XK_C),
+            modKey,
+            w,
+            0,
+            x11.GrabModeAsync,
+            x11.GrabModeAsync,
+        );
+        // switch windows with mod + Tab
+        _ = x11.XGrabKey(
+            m.d,
+            x11.XKeysymToKeycode(m.d, x11.XK_Tab),
+            modKey,
+            w,
+            0,
+            x11.GrabModeAsync,
+            x11.GrabModeAsync,
+        );
         log.info("framed window {} [{}]", .{ w, frame });
     }
 
@@ -193,6 +252,31 @@ pub const Manager = struct {
         _ = x11.XDestroyWindow(m.d, frame);
         _ = m.clients.remove(w);
         log.info("unframed window {} [{}]", .{ w, frame });
+    }
+
+    fn onButtonPress(m: *Manager, ev: x11.XButtonEvent) !void {
+        _ = m;
+        _ = ev;
+    }
+
+    fn onButtonRelease(m: *Manager, ev: x11.XButtonEvent) !void {
+        _ = m;
+        _ = ev;
+    }
+
+    fn onMotionNotify(m: *Manager, ev: x11.XMotionEvent) !void {
+        _ = m;
+        _ = ev;
+    }
+
+    fn onKeyPress(m: *Manager, ev: x11.XKeyEvent) !void {
+        _ = m;
+        _ = ev;
+    }
+
+    fn onKeyRelease(m: *Manager, ev: x11.XKeyEvent) !void {
+        _ = m;
+        _ = ev;
     }
 };
 
