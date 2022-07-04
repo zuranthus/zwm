@@ -6,6 +6,7 @@ pub fn main() !void {
 
     var m = try wm.Manager.init(null);
     defer m.deinit();
+
     try m.run();
 
     log.info("exiting", .{});

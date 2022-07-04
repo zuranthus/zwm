@@ -7,21 +7,25 @@ pub const Manager = struct {
     root: x11.Window,
     clients: std.AutoHashMap(x11.Window, x11.Window),
 
-    pub fn init(display: ?[]u8) !Manager {
-        _ = display;
+    pub fn init(_: ?[]u8) !Manager {
+        if (isInstanceAlive) return error.WmInstanceAlreadyExists;
         const d = x11.XOpenDisplay(":1") orelse return error.CannotOpenDisplay;
         const r = x11.XDefaultRootWindow(d);
+        const clients = std.AutoHashMap(x11.Window, x11.Window).init(std.heap.c_allocator);
+        isInstanceAlive = true;
         return Manager{
             .d = d,
             .root = r,
-            .clients = std.AutoHashMap(x11.Window, x11.Window).init(std.heap.c_allocator),
+            .clients = clients,
         };
     }
 
     pub fn deinit(m: *Manager) void {
+        std.debug.assert(isInstanceAlive);
         _ = x11.XCloseDisplay(m.d);
         // TODO deinit clients
         m.clients.deinit();
+        isInstanceAlive = false;
         log.info("destroyed wm", .{});
     }
 
@@ -30,8 +34,9 @@ pub const Manager = struct {
         try m.startEventLoop();
     }
 
-    const WindowOrigin = enum { CreatedBeforeWM, CreatedAfterWM };
+    var isInstanceAlive = false;
     var isWmDetected = false;
+    const WindowOrigin = enum { CreatedBeforeWM, CreatedAfterWM };
 
     fn initWm(m: *Manager) !void {
         _ = x11.XSetErrorHandler(onWmDetected);
