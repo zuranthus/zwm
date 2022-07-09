@@ -2,16 +2,64 @@ const std = @import("std");
 const x11 = @import("x11.zig");
 const log = @import("./log.zig");
 
+const Pos = struct {
+    x: i32,
+    y: i32,
+
+    fn minus(p: Pos, p2: Pos) Pos {
+        return .{ .x = p.x - p2.x, .y = p.y - p2.y };
+    }
+
+    fn plus(p: Pos, p2: Pos) Pos {
+        return .{ .x = p.x + p2.x, .y = p.y + p2.y };
+    }
+};
+
+const Size = struct {
+    w: u32,
+    h: u32,
+};
+
+const Drag = struct {
+    start_pos: Pos,
+    frame_pos: Pos,
+    frame_size: Size,
+};
+
+const Client = struct {
+    f: x11.Window,
+    d: *x11.Display,
+
+    const Geometry = struct {
+        pos: Pos,
+        size: Size,
+    };
+
+    fn getGeometry(c: Client) !Geometry {
+        var root: x11.Window = undefined;
+        var x: i32 = undefined;
+        var y: i32 = undefined;
+        var w: u32 = undefined;
+        var h: u32 = undefined;
+        var bw: u32 = undefined;
+        var depth: u32 = undefined;
+        if (x11.XGetGeometry(c.d, c.f, &root, &x, &y, &w, &h, &bw, &depth) == 0)
+            return error.Error;
+        return Geometry{ .pos = .{ .x = x, .y = y }, .size = .{ .w = w, .h = h } };
+    }
+};
+
 pub const Manager = struct {
     d: *x11.Display,
     root: x11.Window,
-    clients: std.AutoHashMap(x11.Window, x11.Window),
+    clients: std.AutoHashMap(x11.Window, Client),
+    drag: Drag = undefined,
 
     pub fn init(_: ?[]u8) !Manager {
         if (isInstanceAlive) return error.WmInstanceAlreadyExists;
         const d = x11.XOpenDisplay(":1") orelse return error.CannotOpenDisplay;
         const r = x11.XDefaultRootWindow(d);
-        const clients = std.AutoHashMap(x11.Window, x11.Window).init(std.heap.c_allocator);
+        const clients = std.AutoHashMap(x11.Window, Client).init(std.heap.c_allocator);
         isInstanceAlive = true;
         return Manager{
             .d = d,
@@ -37,7 +85,7 @@ pub const Manager = struct {
     var isInstanceAlive = false;
     var isWmDetected = false;
     const WindowOrigin = enum { CreatedBeforeWM, CreatedAfterWM };
-    const modKey = x11.Mod4Mask;
+    const modKey = x11.Mod1Mask;
 
     fn initWm(m: *Manager) !void {
         _ = x11.XSetErrorHandler(onWmDetected);
@@ -76,6 +124,7 @@ pub const Manager = struct {
                 x11.ReparentNotify => m.onReparentNotify(e.xreparent),
                 x11.MapNotify => m.onMapNotify(e.xmap),
                 x11.UnmapNotify => m.onUnmapNotify(e.xunmap),
+                x11.ConfigureNotify => {},
                 x11.ConfigureRequest => m.onConfigureRequest(e.xconfigurerequest),
                 x11.MapRequest => m.onMapRequest(e.xmaprequest),
                 x11.ButtonPress => m.onButtonPress(e.xbutton),
@@ -151,9 +200,9 @@ pub const Manager = struct {
             .stack_mode = ev.detail,
         };
         var w = ev.window;
-        if (m.clients.get(w)) |frame| {
-            _ = x11.XConfigureWindow(m.d, frame, @intCast(c_uint, ev.value_mask), &changes);
-            log.info("resize frame {} to ({}, {})", .{ frame, ev.width, ev.height });
+        if (m.clients.get(w)) |client| {
+            _ = x11.XConfigureWindow(m.d, client.f, @intCast(c_uint, ev.value_mask), &changes);
+            log.info("resize frame {} to ({}, {})", .{ client.f, ev.width, ev.height });
         }
         _ = x11.XConfigureWindow(m.d, w, @intCast(c_uint, ev.value_mask), &changes);
         log.info("resize {} to ({}, {})", .{ w, changes.width, changes.height });
@@ -193,7 +242,7 @@ pub const Manager = struct {
         _ = x11.XAddToSaveSet(m.d, w);
         _ = x11.XReparentWindow(m.d, w, frame, 0, 0);
         _ = x11.XMapWindow(m.d, frame);
-        try m.clients.put(w, frame);
+        try m.clients.put(w, .{ .f = frame, .d = m.d });
 
         // move with mod + LB
         _ = x11.XGrabButton(
@@ -245,7 +294,8 @@ pub const Manager = struct {
     }
 
     fn unframeWindow(m: *Manager, w: x11.Window) !void {
-        const frame = m.clients.get(w) orelse return error.WindowIsNotClient;
+        const client = try m.getClient(w);
+        const frame = client.f;
         _ = x11.XUnmapWindow(m.d, frame);
         _ = x11.XReparentWindow(m.d, w, m.root, 0, 0);
         _ = x11.XRemoveFromSaveSet(m.d, w);
@@ -254,9 +304,20 @@ pub const Manager = struct {
         log.info("unframed window {} [{}]", .{ w, frame });
     }
 
+    fn getClient(m: *Manager, w: x11.Window) !Client {
+        return m.clients.get(w) orelse return error.WindowIsNotClient;
+    }
+
     fn onButtonPress(m: *Manager, ev: x11.XButtonEvent) !void {
-        _ = m;
-        _ = ev;
+        log.trace("ButtonPress for {}", .{ev.window});
+        const client = try m.getClient(ev.window);
+        const g = try client.getGeometry();
+        m.drag = Drag{
+            .start_pos = .{ .x = ev.x_root, .y = ev.y_root },
+            .frame_pos = g.pos,
+            .frame_size = g.size,
+        };
+        _ = x11.XRaiseWindow(m.d, client.f);
     }
 
     fn onButtonRelease(m: *Manager, ev: x11.XButtonEvent) !void {
@@ -265,8 +326,14 @@ pub const Manager = struct {
     }
 
     fn onMotionNotify(m: *Manager, ev: x11.XMotionEvent) !void {
-        _ = m;
-        _ = ev;
+        log.trace("MotionNotify for {}", .{ev.window});
+        const client = try m.getClient(ev.window);
+        const drag_pos = Pos{ .x = ev.x_root, .y = ev.y_root };
+        const delta = drag_pos.minus(m.drag.start_pos);
+        if (ev.state & x11.Button1Mask != 0) {
+            const frame_pos = m.drag.frame_pos.plus(delta);
+            _ = x11.XMoveWindow(m.d, client.f, frame_pos.x, frame_pos.y);
+        }
     }
 
     fn onKeyPress(m: *Manager, ev: x11.XKeyEvent) !void {
