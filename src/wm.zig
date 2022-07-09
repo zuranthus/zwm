@@ -105,11 +105,14 @@ pub const Manager = struct {
         _ = x11.XQueryTree(m.d, m.root, &root, &parent, &ws, &nws);
         defer _ = x11.XFree(ws);
         std.debug.assert(root == m.root);
-
         var i: usize = 0;
         while (i < nws) : (i += 1) {
             try m.frameWindow(ws[i], WindowOrigin.CreatedBeforeWM);
         }
+
+        var wa: x11.XSetWindowAttributes = undefined;
+        wa.cursor = x11.XCreateFontCursor(m.d, x11.XC_left_ptr);
+        _ = x11.XChangeWindowAttributes(m.d, m.root, x11.CWCursor, &wa);
         log.info("initialized wm", .{});
     }
 
