@@ -6,6 +6,10 @@ const Pos = struct {
     x: i32,
     y: i32,
 
+    fn init(x: anytype, y: anytype) Pos {
+        return .{ .x = @intCast(i32, x), .y = @intCast(i32, y) };
+    }
+
     fn minus(p: Pos, p2: Pos) Pos {
         return .{ .x = p.x - p2.x, .y = p.y - p2.y };
     }
@@ -18,6 +22,19 @@ const Pos = struct {
 const Size = struct {
     w: u32,
     h: u32,
+
+    fn init(w: anytype, h: anytype) Size {
+        return .{ .w = @intCast(u32, w), .h = @intCast(u32, h) };
+    }
+
+    fn min() Size {
+        return init(0, 0);
+    }
+
+    fn max() Size {
+        const maxVal = std.math.maxInt(u32);
+        return init(maxVal, maxVal);
+    }
 };
 
 const Drag = struct {
@@ -29,11 +46,19 @@ const Drag = struct {
 const Client = struct {
     f: x11.Window,
     d: *x11.Display,
+    min_size: Size = Size.min(),
+    max_size: Size = Size.max(),
 
     const Geometry = struct {
         pos: Pos,
         size: Size,
     };
+
+    fn init(frame: x11.Window, d: *x11.Display) !Client {
+        var c = Client{ .f = frame, .d = d };
+        try c.updateSizeHints();
+        return c;
+    }
 
     fn getGeometry(c: Client) !Geometry {
         var root: x11.Window = undefined;
@@ -45,7 +70,21 @@ const Client = struct {
         var depth: u32 = undefined;
         if (x11.XGetGeometry(c.d, c.f, &root, &x, &y, &w, &h, &bw, &depth) == 0)
             return error.Error;
-        return Geometry{ .pos = .{ .x = x, .y = y }, .size = .{ .w = w, .h = h } };
+        return Geometry{ .pos = Pos.init(x, y), .size = Size.init(w, h) };
+    }
+
+    fn updateSizeHints(c: *Client) !void {
+        var hints: x11.XSizeHints = undefined;
+        var supplied: c_long = undefined;
+        if (x11.XGetWMNormalHints(c.d, c.f, &hints, &supplied) != 0) return error.Error;
+        c.min_size = Size.init(10, 10);
+        c.max_size = Size.max();
+        if ((hints.flags & x11.PMinSize != 0) and hints.min_width > 0 and hints.min_height > 0) {
+            c.min_size = Size.init(hints.min_width, hints.min_height);
+        }
+        if (hints.flags & x11.PMaxSize != 0 and hints.max_width > 0 and hints.max_height > 0) {
+            c.max_size = Size.init(hints.max_width, hints.max_height);
+        }
     }
 };
 
@@ -245,7 +284,7 @@ pub const Manager = struct {
         _ = x11.XAddToSaveSet(m.d, w);
         _ = x11.XReparentWindow(m.d, w, frame, 0, 0);
         _ = x11.XMapWindow(m.d, frame);
-        try m.clients.put(w, .{ .f = frame, .d = m.d });
+        try m.clients.put(w, try Client.init(frame, m.d));
 
         // move with mod + LB
         _ = x11.XGrabButton(
@@ -316,7 +355,7 @@ pub const Manager = struct {
         const client = try m.getClient(ev.window);
         const g = try client.getGeometry();
         m.drag = Drag{
-            .start_pos = .{ .x = ev.x_root, .y = ev.y_root },
+            .start_pos = Pos.init(ev.x_root, ev.y_root),
             .frame_pos = g.pos,
             .frame_size = g.size,
         };
@@ -330,12 +369,29 @@ pub const Manager = struct {
 
     fn onMotionNotify(m: *Manager, ev: x11.XMotionEvent) !void {
         log.trace("MotionNotify for {}", .{ev.window});
-        const client = try m.getClient(ev.window);
-        const drag_pos = Pos{ .x = ev.x_root, .y = ev.y_root };
+        const c = try m.getClient(ev.window);
+        const drag_pos = Pos.init(ev.x_root, ev.y_root);
         const delta = drag_pos.minus(m.drag.start_pos);
+
         if (ev.state & x11.Button1Mask != 0) {
             const frame_pos = m.drag.frame_pos.plus(delta);
-            _ = x11.XMoveWindow(m.d, client.f, frame_pos.x, frame_pos.y);
+            log.info("Moving to ({}, {})", .{ frame_pos.x, frame_pos.y });
+            _ = x11.XMoveWindow(m.d, c.f, frame_pos.x, frame_pos.y);
+        } else if (ev.state & x11.Button3Mask != 0) {
+            var w = @intCast(u32, std.math.max(
+                @intCast(i32, c.min_size.w),
+                @intCast(i32, m.drag.frame_size.w) + delta.x,
+            ));
+            var h = @intCast(u32, std.math.max(
+                @intCast(i32, c.min_size.h),
+                @intCast(i32, m.drag.frame_size.h) + delta.y,
+            ));
+            w = std.math.min(w, c.max_size.w);
+            h = std.math.min(h, c.max_size.h);
+
+            log.info("Resizing to ({}, {})", .{ w, h });
+            _ = x11.XResizeWindow(m.d, c.f, w, h);
+            _ = x11.XResizeWindow(m.d, ev.window, w, h);
         }
     }
 
