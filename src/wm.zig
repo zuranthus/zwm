@@ -89,9 +89,11 @@ const Client = struct {
 };
 
 pub const Manager = struct {
+    const Clients = std.AutoArrayHashMap(x11.Window, Client);
+
     d: *x11.Display,
     root: x11.Window,
-    clients: std.AutoHashMap(x11.Window, Client),
+    clients: Clients = Clients.init(std.heap.c_allocator),
     drag: Drag = undefined,
     wm_delete: x11.Atom = undefined,
     wm_protocols: x11.Atom = undefined,
@@ -100,12 +102,10 @@ pub const Manager = struct {
         if (isInstanceAlive) return error.WmInstanceAlreadyExists;
         const d = x11.XOpenDisplay(":1") orelse return error.CannotOpenDisplay;
         const r = x11.XDefaultRootWindow(d);
-        const clients = std.AutoHashMap(x11.Window, Client).init(std.heap.c_allocator);
         isInstanceAlive = true;
         return Manager{
             .d = d,
             .root = r,
-            .clients = clients,
         };
     }
 
@@ -347,7 +347,7 @@ pub const Manager = struct {
         _ = x11.XReparentWindow(m.d, w, m.root, 0, 0);
         _ = x11.XRemoveFromSaveSet(m.d, w);
         _ = x11.XDestroyWindow(m.d, frame);
-        _ = m.clients.remove(w);
+        _ = m.clients.orderedRemove(w);
         log.info("unframed window {} [{}]", .{ w, frame });
     }
 
@@ -428,10 +428,23 @@ pub const Manager = struct {
         _ = x11.XKillClient(m.d, w);
     }
 
+    fn focusNextClient(m: *Manager, w: x11.Window) !void {
+        const keys = m.clients.keys();
+        var i = for (keys) |cw, i| {
+            if (w == cw) break i;
+        } else return error.WindowIsNotClient;
+
+        i = (i + 1) % keys.len;
+        const nw = keys[i];
+        const nc = m.clients.values()[i];
+        _ = x11.XRaiseWindow(m.d, nc.f);
+        _ = x11.XSetInputFocus(m.d, nw, x11.RevertToPointerRoot, x11.CurrentTime);
+    }
+
     fn onKeyPress(m: *Manager, ev: x11.XKeyEvent) !void {
-        if (ev.state & modKey != 0 and ev.keycode == x11.XKeysymToKeycode(m.d, x11.XK_C)) {
-            try m.killClient(ev.window);
-        }
+        if (ev.state & modKey == 0) return;
+        if (ev.keycode == x11.XKeysymToKeycode(m.d, x11.XK_C)) try m.killClient(ev.window);
+        if (ev.keycode == x11.XKeysymToKeycode(m.d, x11.XK_Tab)) try m.focusNextClient(ev.window);
     }
 
     fn onKeyRelease(m: *Manager, ev: x11.XKeyEvent) !void {
