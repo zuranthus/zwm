@@ -93,6 +93,8 @@ pub const Manager = struct {
     root: x11.Window,
     clients: std.AutoHashMap(x11.Window, Client),
     drag: Drag = undefined,
+    wm_delete: x11.Atom = undefined,
+    wm_protocols: x11.Atom = undefined,
 
     pub fn init(_: ?[]u8) !Manager {
         if (isInstanceAlive) return error.WmInstanceAlreadyExists;
@@ -152,6 +154,9 @@ pub const Manager = struct {
         var wa: x11.XSetWindowAttributes = undefined;
         wa.cursor = x11.XCreateFontCursor(m.d, x11.XC_left_ptr);
         _ = x11.XChangeWindowAttributes(m.d, m.root, x11.CWCursor, &wa);
+
+        m.wm_delete = x11.XInternAtom(m.d, "WM_DELETE_WINDOW", 0);
+        m.wm_protocols = x11.XInternAtom(m.d, "WM_PROTOCOLS", 0);
         log.info("initialized wm", .{});
     }
 
@@ -395,9 +400,38 @@ pub const Manager = struct {
         }
     }
 
+    fn sendEvent(m: *Manager, w: x11.Window, protocol: x11.Atom) !void {
+        var event = std.mem.zeroes(x11.XEvent);
+        event.type = x11.ClientMessage;
+        event.xclient.message_type = m.wm_protocols;
+        event.xclient.window = w;
+        event.xclient.format = 32;
+        event.xclient.data.l[0] = @intCast(c_long, protocol);
+        if (x11.XSendEvent(m.d, w, 0, x11.NoEventMask, &event) == 0) return error.Error;
+    }
+
+    fn killClient(m: *Manager, w: x11.Window) !void {
+        var protocols: [*c]x11.Atom = undefined;
+        var count: i32 = undefined;
+        _ = x11.XGetWMProtocols(m.d, w, &protocols, &count);
+        defer _ = x11.XFree(protocols);
+
+        const supports_delete = for (protocols[0..@intCast(usize, count)]) |p| {
+            if (p == m.wm_delete) break true;
+        } else false;
+        if (supports_delete) {
+            log.info("Sending wm_delete to {}", .{w});
+            try sendEvent(m, w, m.wm_delete);
+            return;
+        }
+        log.info("Killing {}", .{w});
+        _ = x11.XKillClient(m.d, w);
+    }
+
     fn onKeyPress(m: *Manager, ev: x11.XKeyEvent) !void {
-        _ = m;
-        _ = ev;
+        if (ev.state & modKey != 0 and ev.keycode == x11.XKeysymToKeycode(m.d, x11.XK_C)) {
+            try m.killClient(ev.window);
+        }
     }
 
     fn onKeyRelease(m: *Manager, ev: x11.XKeyEvent) !void {
