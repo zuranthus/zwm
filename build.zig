@@ -15,7 +15,7 @@ pub fn build(b: *std.build.Builder) void {
     exe.setTarget(target);
     exe.setBuildMode(mode);
     exe.linkSystemLibrary("c");
-    exe.linkSystemLibrary("x11");
+    exe.linkSystemLibrary("X11");
     exe.install();
 
     const run_cmd = exe.run();

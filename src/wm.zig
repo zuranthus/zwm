@@ -125,7 +125,6 @@ pub const Manager = struct {
 
     var isInstanceAlive = false;
     var isWmDetected = false;
-    const WindowOrigin = enum { CreatedBeforeWM, CreatedAfterWM };
     const modKey = x11.Mod1Mask;
 
     fn initWm(m: *Manager) !void {
@@ -142,13 +141,24 @@ pub const Manager = struct {
         var root: x11.Window = undefined;
         var parent: x11.Window = undefined;
         var ws: [*c]x11.Window = undefined;
-        var nws: c_uint = 0;
+        var nws: c_uint = undefined;
         _ = x11.XQueryTree(m.d, m.root, &root, &parent, &ws, &nws);
         defer _ = x11.XFree(ws);
         std.debug.assert(root == m.root);
-        var i: usize = 0;
-        while (i < nws) : (i += 1) {
-            try m.frameWindow(ws[i], WindowOrigin.CreatedBeforeWM);
+        if (nws > 0) {
+            for (ws[0..nws]) |w| {
+                var wa: x11.XWindowAttributes = undefined;
+                if (x11.XGetWindowAttributes(m.d, w, &wa) == 0) {
+                    log.err("XGetWindowAttributes failed for {}", .{w});
+                    continue;
+                }
+                // Only add windows that are visible and don't set override_redirect
+                if (wa.override_redirect == 0 and wa.map_state == x11.IsViewable) {
+                    m.addClient(w) catch |e| log.err("Add client {} failed with {}", .{ w, e });
+                } else {
+                    log.info("Ignoring {}", .{w});
+                }
+            }
         }
 
         var wa: x11.XSetWindowAttributes = undefined;
@@ -231,7 +241,7 @@ pub const Manager = struct {
         } else if (ev.event == m.root) {
             log.trace("ignore UnmapNotify for reparented pre-existing window {}", .{w});
         } else {
-            try m.unframeWindow(w);
+            try m.removeClient(w);
         }
     }
 
@@ -257,102 +267,53 @@ pub const Manager = struct {
 
     fn onMapRequest(m: *Manager, ev: x11.XMapRequestEvent) !void {
         log.trace("MapRequest for {}", .{ev.window});
-        try m.frameWindow(ev.window, WindowOrigin.CreatedAfterWM);
+        try m.addClient(ev.window);
         _ = x11.XMapWindow(m.d, ev.window);
     }
 
-    fn frameWindow(m: *Manager, w: x11.Window, wo: WindowOrigin) !void {
+    fn addClient(m: *Manager, w: x11.Window) !void {
         if (m.clients.get(w) != null) return error.WindowAlreadyClient;
 
-        const border_width = 3;
-        const border_color = 0xff0000;
-        const bg_color = 0x0000ff;
+        const bdw = 3;
+        const bdc = 0xff0000;
+        const bgc = 0x000000;
 
-        var wattr: x11.XWindowAttributes = undefined;
-        if (x11.XGetWindowAttributes(m.d, w, &wattr) == 0) return error.Error;
-        if (wo == WindowOrigin.CreatedBeforeWM and ((wattr.override_redirect != 0 or wattr.map_state != x11.IsViewable))) {
-            return;
-        }
+        var wa: x11.XWindowAttributes = undefined;
+        if (x11.XGetWindowAttributes(m.d, w, &wa) == 0) return error.Error;
+        const fw = @intCast(c_uint, wa.width);
+        const fh = @intCast(c_uint, wa.height);
 
-        const frame = x11.XCreateSimpleWindow(
-            m.d,
-            m.root,
-            wattr.x,
-            wattr.y,
-            @intCast(c_uint, wattr.width),
-            @intCast(c_uint, wattr.height),
-            border_width,
-            border_color,
-            bg_color,
-        );
+        const frame = x11.XCreateSimpleWindow(m.d, m.root, wa.x, wa.y, fw, fh, bdw, bdc, bgc);
+        try m.clients.put(w, try Client.init(frame, m.d));
         _ = x11.XSelectInput(m.d, frame, x11.SubstructureRedirectMask | x11.SubstructureNotifyMask);
         _ = x11.XAddToSaveSet(m.d, w);
         _ = x11.XReparentWindow(m.d, w, frame, 0, 0);
         _ = x11.XMapWindow(m.d, frame);
-        try m.clients.put(w, try Client.init(frame, m.d));
 
         // move with mod + LB
-        _ = x11.XGrabButton(
-            m.d,
-            x11.Button1,
-            modKey,
-            w,
-            0,
-            x11.ButtonPressMask | x11.ButtonReleaseMask | x11.ButtonMotionMask,
-            x11.GrabModeAsync,
-            x11.GrabModeAsync,
-            x11.None,
-            x11.None,
-        );
+        _ = x11.XGrabButton(m.d, x11.Button1, modKey, w, 0, x11.ButtonPressMask | x11.ButtonReleaseMask | x11.ButtonMotionMask, x11.GrabModeAsync, x11.GrabModeAsync, x11.None, x11.None);
         // resize with mod + RB
-        _ = x11.XGrabButton(
-            m.d,
-            x11.Button3,
-            modKey,
-            w,
-            0,
-            x11.ButtonPressMask | x11.ButtonReleaseMask | x11.ButtonMotionMask,
-            x11.GrabModeAsync,
-            x11.GrabModeAsync,
-            x11.None,
-            x11.None,
-        );
+        _ = x11.XGrabButton(m.d, x11.Button3, modKey, w, 0, x11.ButtonPressMask | x11.ButtonReleaseMask | x11.ButtonMotionMask, x11.GrabModeAsync, x11.GrabModeAsync, x11.None, x11.None);
         // kill with mod + C
-        _ = x11.XGrabKey(
-            m.d,
-            x11.XKeysymToKeycode(m.d, x11.XK_C),
-            modKey,
-            w,
-            0,
-            x11.GrabModeAsync,
-            x11.GrabModeAsync,
-        );
+        _ = x11.XGrabKey(m.d, x11.XKeysymToKeycode(m.d, x11.XK_C), modKey, w, 0, x11.GrabModeAsync, x11.GrabModeAsync);
         // switch windows with mod + Tab
-        _ = x11.XGrabKey(
-            m.d,
-            x11.XKeysymToKeycode(m.d, x11.XK_Tab),
-            modKey,
-            w,
-            0,
-            x11.GrabModeAsync,
-            x11.GrabModeAsync,
-        );
-        log.info("framed window {} [{}]", .{ w, frame });
+        _ = x11.XGrabKey(m.d, x11.XKeysymToKeycode(m.d, x11.XK_Tab), modKey, w, 0, x11.GrabModeAsync, x11.GrabModeAsync);
+        log.info("Added client {} [{}]", .{ w, frame });
     }
 
-    fn unframeWindow(m: *Manager, w: x11.Window) !void {
+    fn getClient(m: *Manager, w: x11.Window) !Client {
+        return m.clients.get(w) orelse return error.WindowIsNotClient;
+    }
+
+    fn removeClient(m: *Manager, w: x11.Window) !void {
         const client = try m.getClient(w);
         const frame = client.f;
         _ = x11.XUnmapWindow(m.d, frame);
         _ = x11.XReparentWindow(m.d, w, m.root, 0, 0);
         _ = x11.XRemoveFromSaveSet(m.d, w);
         _ = x11.XDestroyWindow(m.d, frame);
-        _ = m.clients.orderedRemove(w);
-        log.info("unframed window {} [{}]", .{ w, frame });
-    }
-
-    fn getClient(m: *Manager, w: x11.Window) !Client {
-        return m.clients.get(w) orelse return error.WindowIsNotClient;
+        std.debug.assert(m.clients.orderedRemove(w));
+        log.info("Removed client {} [{}]", .{ w, frame });
     }
 
     fn onButtonPress(m: *Manager, ev: x11.XButtonEvent) !void {
@@ -428,10 +389,10 @@ pub const Manager = struct {
         _ = x11.XKillClient(m.d, w);
     }
 
-    fn focusNextClient(m: *Manager, w: x11.Window) !void {
+    fn focusNextClient(m: *Manager, cw: x11.Window) !void {
         const keys = m.clients.keys();
-        var i = for (keys) |cw, i| {
-            if (w == cw) break i;
+        var i = for (keys) |k, i| {
+            if (k == cw) break i;
         } else return error.WindowIsNotClient;
 
         i = (i + 1) % keys.len;
