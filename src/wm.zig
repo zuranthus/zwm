@@ -44,7 +44,7 @@ const Drag = struct {
 };
 
 const Client = struct {
-    f: x11.Window,
+    w: x11.Window,
     d: *x11.Display,
     min_size: Size = Size.min(),
     max_size: Size = Size.max(),
@@ -54,8 +54,8 @@ const Client = struct {
         size: Size,
     };
 
-    fn init(frame: x11.Window, d: *x11.Display) !Client {
-        var c = Client{ .f = frame, .d = d };
+    fn init(win: x11.Window, d: *x11.Display) !Client {
+        var c = Client{ .w = win, .d = d };
         try c.updateSizeHints();
         return c;
     }
@@ -68,16 +68,17 @@ const Client = struct {
         var h: u32 = undefined;
         var bw: u32 = undefined;
         var depth: u32 = undefined;
-        if (x11.XGetGeometry(c.d, c.f, &root, &x, &y, &w, &h, &bw, &depth) == 0)
+        if (x11.XGetGeometry(c.d, c.w, &root, &x, &y, &w, &h, &bw, &depth) == 0)
             return error.Error;
         return Geometry{ .pos = Pos.init(x, y), .size = Size.init(w, h) };
     }
 
     fn updateSizeHints(c: *Client) !void {
-        var hints: x11.XSizeHints = undefined;
+        var hints: *x11.XSizeHints = x11.XAllocSizeHints();
+        defer _ = x11.XFree(hints);
         var supplied: c_long = undefined;
-        if (x11.XGetWMNormalHints(c.d, c.f, &hints, &supplied) != 0) return error.Error;
-        c.min_size = Size.init(10, 10);
+        if (x11.XGetWMNormalHints(c.d, c.w, hints, &supplied) == 0) return error.XGetWMNormalHintsFailed;
+        c.min_size = Size.init(1, 1);
         c.max_size = Size.max();
         if ((hints.flags & x11.PMinSize != 0) and hints.min_width > 0 and hints.min_height > 0) {
             c.min_size = Size.init(hints.min_width, hints.min_height);
@@ -93,6 +94,7 @@ pub const Manager = struct {
 
     d: *x11.Display,
     root: x11.Window,
+    focused: ?Client = null,
     clients: Clients = Clients.init(std.heap.c_allocator),
     drag: Drag = undefined,
     wm_delete: x11.Atom = undefined,
@@ -154,11 +156,12 @@ pub const Manager = struct {
                 }
                 // Only add windows that are visible and don't set override_redirect
                 if (wa.override_redirect == 0 and wa.map_state == x11.IsViewable) {
-                    m.addClient(w) catch |e| log.err("Add client {} failed with {}", .{ w, e });
+                    _ = m.addClient(w) catch |e| log.err("Add client {} failed with {}", .{ w, e });
                 } else {
                     log.info("Ignoring {}", .{w});
                 }
             }
+            if (m.clients.count() > 0) m.focusClient(m.clients.values()[0]);
         }
 
         var wa: x11.XSetWindowAttributes = undefined;
@@ -238,8 +241,6 @@ pub const Manager = struct {
 
         if (m.clients.get(w) == null) {
             log.trace("ignore UnmapNotify for non-client window {}", .{w});
-        } else if (ev.event == m.root) {
-            log.trace("ignore UnmapNotify for reparented pre-existing window {}", .{w});
         } else {
             try m.removeClient(w);
         }
@@ -257,38 +258,31 @@ pub const Manager = struct {
             .stack_mode = ev.detail,
         };
         var w = ev.window;
-        if (m.clients.get(w)) |client| {
-            _ = x11.XConfigureWindow(m.d, client.f, @intCast(c_uint, ev.value_mask), &changes);
-            log.info("resize frame {} to ({}, {})", .{ client.f, ev.width, ev.height });
-        }
         _ = x11.XConfigureWindow(m.d, w, @intCast(c_uint, ev.value_mask), &changes);
         log.info("resize {} to ({}, {})", .{ w, changes.width, changes.height });
     }
 
     fn onMapRequest(m: *Manager, ev: x11.XMapRequestEvent) !void {
         log.trace("MapRequest for {}", .{ev.window});
-        try m.addClient(ev.window);
+        const c = try m.addClient(ev.window);
         _ = x11.XMapWindow(m.d, ev.window);
+        m.focusClient(c);
     }
 
-    fn addClient(m: *Manager, w: x11.Window) !void {
-        if (m.clients.get(w) != null) return error.WindowAlreadyClient;
+    const bcf = 0xff8080;
+    const bcb = 0x808080;
 
-        const bdw = 3;
-        const bdc = 0xff0000;
-        const bgc = 0x000000;
+    fn addClient(m: *Manager, w: x11.Window) !Client {
+        if (m.isClient(w)) return error.WindowAlreadyClient;
 
         var wa: x11.XWindowAttributes = undefined;
         if (x11.XGetWindowAttributes(m.d, w, &wa) == 0) return error.Error;
-        const fw = @intCast(c_uint, wa.width);
-        const fh = @intCast(c_uint, wa.height);
 
-        const frame = x11.XCreateSimpleWindow(m.d, m.root, wa.x, wa.y, fw, fh, bdw, bdc, bgc);
-        try m.clients.put(w, try Client.init(frame, m.d));
-        _ = x11.XSelectInput(m.d, frame, x11.SubstructureRedirectMask | x11.SubstructureNotifyMask);
-        _ = x11.XAddToSaveSet(m.d, w);
-        _ = x11.XReparentWindow(m.d, w, frame, 0, 0);
-        _ = x11.XMapWindow(m.d, frame);
+        const c = try Client.init(w, m.d);
+        try m.clients.put(w, c);
+        _ = x11.XSelectInput(m.d, w, x11.SubstructureRedirectMask | x11.SubstructureNotifyMask);
+        _ = x11.XSetWindowBorderWidth(m.d, w, 3);
+        //_ = x11.XAddToSaveSet(m.d, w);
 
         // move with mod + LB
         _ = x11.XGrabButton(m.d, x11.Button1, modKey, w, 0, x11.ButtonPressMask | x11.ButtonReleaseMask | x11.ButtonMotionMask, x11.GrabModeAsync, x11.GrabModeAsync, x11.None, x11.None);
@@ -298,22 +292,52 @@ pub const Manager = struct {
         _ = x11.XGrabKey(m.d, x11.XKeysymToKeycode(m.d, x11.XK_C), modKey, w, 0, x11.GrabModeAsync, x11.GrabModeAsync);
         // switch windows with mod + Tab
         _ = x11.XGrabKey(m.d, x11.XKeysymToKeycode(m.d, x11.XK_Tab), modKey, w, 0, x11.GrabModeAsync, x11.GrabModeAsync);
-        log.info("Added client {} [{}]", .{ w, frame });
+        log.info("Added client {}", .{w});
+        log.trace("min_size ({}, {}), max_size ({}, {})", .{ c.min_size.w, c.min_size.h, c.max_size.w, c.max_size.h });
+        return c;
     }
 
     fn getClient(m: *Manager, w: x11.Window) !Client {
         return m.clients.get(w) orelse return error.WindowIsNotClient;
     }
 
+    fn isClient(m: *Manager, w: x11.Window) bool {
+        return m.clients.contains(w);
+    }
+
     fn removeClient(m: *Manager, w: x11.Window) !void {
-        const client = try m.getClient(w);
-        const frame = client.f;
-        _ = x11.XUnmapWindow(m.d, frame);
-        _ = x11.XReparentWindow(m.d, w, m.root, 0, 0);
-        _ = x11.XRemoveFromSaveSet(m.d, w);
-        _ = x11.XDestroyWindow(m.d, frame);
+        const c = try m.getClient(w);
+        //_ = x11.XRemoveFromSaveSet(m.d, w);
+        if (m.isClientFocused(c)) m.focused = null;
         std.debug.assert(m.clients.orderedRemove(w));
-        log.info("Removed client {} [{}]", .{ w, frame });
+        if (m.clients.count() > 0) m.focusClient(m.clients.values()[0]);
+        log.info("Removed client {}", .{w});
+    }
+
+    fn isClientFocused(m: *Manager, c: Client) bool {
+        return if (m.focused) |fc| fc.w == c.w else false;
+    }
+
+    fn clearFocus(m: *Manager) void {
+        if (m.focused) |fc| {
+            _ = x11.XSetWindowBorder(m.d, fc.w, bcb);
+            _ = x11.XSetInputFocus(m.d, x11.PointerRoot, x11.RevertToPointerRoot, x11.CurrentTime);
+            m.focused = null;
+            log.info("Unfocused client {}", .{fc.w});
+        }
+    }
+
+    fn focusClient(m: *Manager, c: Client) void {
+        if (m.focused) |fc| {
+            if (fc.w == c.w) return;
+            m.clearFocus();
+        }
+
+        _ = x11.XSetInputFocus(m.d, c.w, x11.RevertToPointerRoot, x11.CurrentTime);
+        m.focused = c;
+        _ = x11.XSetWindowBorder(m.d, c.w, bcf);
+        _ = x11.XRaiseWindow(m.d, c.w);
+        log.info("Focused client {}", .{c.w});
     }
 
     fn onButtonPress(m: *Manager, ev: x11.XButtonEvent) !void {
@@ -325,7 +349,7 @@ pub const Manager = struct {
             .frame_pos = g.pos,
             .frame_size = g.size,
         };
-        _ = x11.XRaiseWindow(m.d, client.f);
+        _ = x11.XRaiseWindow(m.d, client.w);
     }
 
     fn onButtonRelease(m: *Manager, ev: x11.XButtonEvent) !void {
@@ -342,7 +366,7 @@ pub const Manager = struct {
         if (ev.state & x11.Button1Mask != 0) {
             const frame_pos = m.drag.frame_pos.plus(delta);
             log.info("Moving to ({}, {})", .{ frame_pos.x, frame_pos.y });
-            _ = x11.XMoveWindow(m.d, c.f, frame_pos.x, frame_pos.y);
+            _ = x11.XMoveWindow(m.d, c.w, frame_pos.x, frame_pos.y);
         } else if (ev.state & x11.Button3Mask != 0) {
             var w = @intCast(u32, std.math.max(
                 @intCast(i32, c.min_size.w),
@@ -356,7 +380,6 @@ pub const Manager = struct {
             h = std.math.min(h, c.max_size.h);
 
             log.info("Resizing to ({}, {})", .{ w, h });
-            _ = x11.XResizeWindow(m.d, c.f, w, h);
             _ = x11.XResizeWindow(m.d, ev.window, w, h);
         }
     }
@@ -396,10 +419,8 @@ pub const Manager = struct {
         } else return error.WindowIsNotClient;
 
         i = (i + 1) % keys.len;
-        const nw = keys[i];
         const nc = m.clients.values()[i];
-        _ = x11.XRaiseWindow(m.d, nc.f);
-        _ = x11.XSetInputFocus(m.d, nw, x11.RevertToPointerRoot, x11.CurrentTime);
+        m.focusClient(nc);
     }
 
     fn onKeyPress(m: *Manager, ev: x11.XKeyEvent) !void {
