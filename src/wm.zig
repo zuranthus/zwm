@@ -113,8 +113,8 @@ pub const Manager = struct {
 
     pub fn deinit(m: *Manager) void {
         std.debug.assert(isInstanceAlive);
+        _ = x11.XUngrabKey(m.d, x11.AnyKey, x11.AnyModifier, m.root);
         _ = x11.XCloseDisplay(m.d);
-        // TODO deinit clients
         m.clients.deinit();
         isInstanceAlive = false;
         log.info("destroyed wm", .{});
@@ -175,6 +175,7 @@ pub const Manager = struct {
         m.wm_protocols = x11.XInternAtom(m.d, "WM_PROTOCOLS", 0);
 
         // hotkeys
+        _ = x11.XUngrabKey(m.d, x11.AnyKey, x11.AnyModifier, m.root);
         // kill with mod + C
         _ = x11.XGrabKey(m.d, x11.XKeysymToKeycode(m.d, x11.XK_C), modKey, m.root, 0, x11.GrabModeAsync, x11.GrabModeAsync);
         // switch windows with mod + Tab
@@ -293,7 +294,6 @@ pub const Manager = struct {
         _ = x11.XSelectInput(m.d, w, x11.SubstructureRedirectMask | x11.SubstructureNotifyMask);
         _ = x11.XSetWindowBorderWidth(m.d, w, 3);
         _ = x11.XSetWindowBorder(m.d, w, bcb);
-        //_ = x11.XAddToSaveSet(m.d, w);
 
         // move with mod + LB
         _ = x11.XGrabButton(m.d, x11.Button1, modKey, w, 0, x11.ButtonPressMask | x11.ButtonReleaseMask | x11.ButtonMotionMask, x11.GrabModeAsync, x11.GrabModeAsync, x11.None, x11.None);
@@ -315,7 +315,6 @@ pub const Manager = struct {
 
     fn removeClient(m: *Manager, w: x11.Window) !void {
         const c = try m.getClient(w);
-        //_ = x11.XRemoveFromSaveSet(m.d, w);
         if (m.isClientFocused(c)) m.focused = null;
         std.debug.assert(m.clients.orderedRemove(w));
         if (m.clients.count() > 0) m.focusClient(m.clients.values()[0]);
