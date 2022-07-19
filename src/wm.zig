@@ -62,12 +62,12 @@ const Client = struct {
 
     fn getGeometry(c: Client) !Geometry {
         var root: x11.Window = undefined;
-        var x: i32 = undefined;
-        var y: i32 = undefined;
-        var w: u32 = undefined;
-        var h: u32 = undefined;
-        var bw: u32 = undefined;
-        var depth: u32 = undefined;
+        var x: i32 = 0;
+        var y: i32 = 0;
+        var w: u32 = 0;
+        var h: u32 = 0;
+        var bw: u32 = 0;
+        var depth: u32 = 0;
         if (x11.XGetGeometry(c.d, c.w, &root, &x, &y, &w, &h, &bw, &depth) == 0)
             return error.Error;
         return Geometry{ .pos = Pos.init(x, y), .size = Size.init(w, h) };
@@ -130,26 +130,27 @@ pub const Manager = struct {
     const modKey = x11.Mod1Mask;
 
     fn initWm(m: *Manager) !void {
+        // check for another WM
         _ = x11.XSetErrorHandler(onWmDetected);
         _ = x11.XSelectInput(m.d, m.root, x11.SubstructureRedirectMask | x11.SubstructureNotifyMask);
         _ = x11.XSync(m.d, 0);
         if (Manager.isWmDetected) return error.AnotherWmDetected;
-
         _ = x11.XSetErrorHandler(onXError);
 
         _ = x11.XGrabServer(m.d);
         defer _ = x11.XUngrabServer(m.d);
 
+        // manage existing visbile windows
         var root: x11.Window = undefined;
         var parent: x11.Window = undefined;
-        var ws: [*c]x11.Window = undefined;
-        var nws: c_uint = undefined;
+        var ws: [*c]x11.Window = null;
+        var nws: c_uint = 0;
         _ = x11.XQueryTree(m.d, m.root, &root, &parent, &ws, &nws);
-        defer _ = x11.XFree(ws);
+        defer _ = if (ws != null) x11.XFree(ws);
         std.debug.assert(root == m.root);
         if (nws > 0) {
             for (ws[0..nws]) |w| {
-                var wa: x11.XWindowAttributes = undefined;
+                var wa = std.mem.zeroes(x11.XWindowAttributes);
                 if (x11.XGetWindowAttributes(m.d, w, &wa) == 0) {
                     log.err("XGetWindowAttributes failed for {}", .{w});
                     continue;
@@ -164,18 +165,27 @@ pub const Manager = struct {
             if (m.clients.count() > 0) m.focusClient(m.clients.values()[0]);
         }
 
-        var wa: x11.XSetWindowAttributes = undefined;
+        // show cursor
+        var wa = std.mem.zeroes(x11.XSetWindowAttributes);
         wa.cursor = x11.XCreateFontCursor(m.d, x11.XC_left_ptr);
         _ = x11.XChangeWindowAttributes(m.d, m.root, x11.CWCursor, &wa);
 
+        // create atoms
         m.wm_delete = x11.XInternAtom(m.d, "WM_DELETE_WINDOW", 0);
         m.wm_protocols = x11.XInternAtom(m.d, "WM_PROTOCOLS", 0);
+
+        // hotkeys
+        // kill with mod + C
+        _ = x11.XGrabKey(m.d, x11.XKeysymToKeycode(m.d, x11.XK_C), modKey, m.root, 0, x11.GrabModeAsync, x11.GrabModeAsync);
+        // switch windows with mod + Tab
+        _ = x11.XGrabKey(m.d, x11.XKeysymToKeycode(m.d, x11.XK_Tab), modKey, m.root, 0, x11.GrabModeAsync, x11.GrabModeAsync);
+
         log.info("initialized wm", .{});
     }
 
     fn startEventLoop(m: *Manager) !void {
         while (true) {
-            var e: x11.XEvent = undefined;
+            var e = std.mem.zeroes(x11.XEvent);
             _ = x11.XNextEvent(m.d, &e);
             const ename = x11.eventTypeToString(@intCast(u8, e.type));
             try switch (e.type) {
@@ -275,23 +285,21 @@ pub const Manager = struct {
     fn addClient(m: *Manager, w: x11.Window) !Client {
         if (m.isClient(w)) return error.WindowAlreadyClient;
 
-        var wa: x11.XWindowAttributes = undefined;
+        var wa = std.mem.zeroes(x11.XWindowAttributes);
         if (x11.XGetWindowAttributes(m.d, w, &wa) == 0) return error.Error;
 
         const c = try Client.init(w, m.d);
         try m.clients.put(w, c);
         _ = x11.XSelectInput(m.d, w, x11.SubstructureRedirectMask | x11.SubstructureNotifyMask);
         _ = x11.XSetWindowBorderWidth(m.d, w, 3);
+        _ = x11.XSetWindowBorder(m.d, w, bcb);
         //_ = x11.XAddToSaveSet(m.d, w);
 
         // move with mod + LB
         _ = x11.XGrabButton(m.d, x11.Button1, modKey, w, 0, x11.ButtonPressMask | x11.ButtonReleaseMask | x11.ButtonMotionMask, x11.GrabModeAsync, x11.GrabModeAsync, x11.None, x11.None);
         // resize with mod + RB
         _ = x11.XGrabButton(m.d, x11.Button3, modKey, w, 0, x11.ButtonPressMask | x11.ButtonReleaseMask | x11.ButtonMotionMask, x11.GrabModeAsync, x11.GrabModeAsync, x11.None, x11.None);
-        // kill with mod + C
-        _ = x11.XGrabKey(m.d, x11.XKeysymToKeycode(m.d, x11.XK_C), modKey, w, 0, x11.GrabModeAsync, x11.GrabModeAsync);
-        // switch windows with mod + Tab
-        _ = x11.XGrabKey(m.d, x11.XKeysymToKeycode(m.d, x11.XK_Tab), modKey, w, 0, x11.GrabModeAsync, x11.GrabModeAsync);
+
         log.info("Added client {}", .{w});
         log.trace("min_size ({}, {}), max_size ({}, {})", .{ c.min_size.w, c.min_size.h, c.max_size.w, c.max_size.h });
         return c;
@@ -394,28 +402,30 @@ pub const Manager = struct {
         if (x11.XSendEvent(m.d, w, 0, x11.NoEventMask, &event) == 0) return error.Error;
     }
 
-    fn killClient(m: *Manager, w: x11.Window) !void {
-        var protocols: [*c]x11.Atom = undefined;
-        var count: i32 = undefined;
-        _ = x11.XGetWMProtocols(m.d, w, &protocols, &count);
-        defer _ = x11.XFree(protocols);
+    fn killClient(m: *Manager, c: Client) !void {
+        var protocols: [*c]x11.Atom = null;
+        var count: i32 = 0;
+        _ = x11.XGetWMProtocols(m.d, c.w, &protocols, &count);
+        defer _ = if (protocols != null) x11.XFree(protocols);
 
-        const supports_delete = for (protocols[0..@intCast(usize, count)]) |p| {
+        const supports_delete = count > 0 and for (protocols[0..@intCast(usize, count)]) |p| {
             if (p == m.wm_delete) break true;
         } else false;
         if (supports_delete) {
-            log.info("Sending wm_delete to {}", .{w});
-            try sendEvent(m, w, m.wm_delete);
+            log.info("Sending wm_delete to {}", .{c.w});
+            try sendEvent(m, c.w, m.wm_delete);
             return;
         }
-        log.info("Killing {}", .{w});
-        _ = x11.XKillClient(m.d, w);
+        log.info("Killing {}", .{c.w});
+        _ = x11.XKillClient(m.d, c.w);
     }
 
-    fn focusNextClient(m: *Manager, cw: x11.Window) !void {
+    fn focusNextClient(m: *Manager, c: Client) !void {
+        if (m.focused == null) return;
+
         const keys = m.clients.keys();
         var i = for (keys) |k, i| {
-            if (k == cw) break i;
+            if (k == c.w) break i;
         } else return error.WindowIsNotClient;
 
         i = (i + 1) % keys.len;
@@ -425,8 +435,12 @@ pub const Manager = struct {
 
     fn onKeyPress(m: *Manager, ev: x11.XKeyEvent) !void {
         if (ev.state & modKey == 0) return;
-        if (ev.keycode == x11.XKeysymToKeycode(m.d, x11.XK_C)) try m.killClient(ev.window);
-        if (ev.keycode == x11.XKeysymToKeycode(m.d, x11.XK_Tab)) try m.focusNextClient(ev.window);
+        if (ev.keycode == x11.XKeysymToKeycode(m.d, x11.XK_C)) {
+            if (m.focused) |fc| try m.killClient(fc);
+        }
+        if (ev.keycode == x11.XKeysymToKeycode(m.d, x11.XK_Tab)) {
+            if (m.focused) |fc| try m.focusNextClient(fc);
+        }
     }
 
     fn onKeyRelease(m: *Manager, ev: x11.XKeyEvent) !void {
