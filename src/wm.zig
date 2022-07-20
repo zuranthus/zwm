@@ -204,6 +204,7 @@ pub const Manager = struct {
                     while (x11.XCheckTypedWindowEvent(m.d, e.xmotion.window, x11.MotionNotify, &e) != 0) {}
                     try m.onMotionNotify(e.xmotion);
                 },
+                x11.EnterNotify => m.onEnterNotify(e.xcrossing),
                 x11.KeyPress => m.onKeyPress(e.xkey),
                 x11.KeyRelease => m.onKeyRelease(e.xkey),
                 else => log.trace("ignored event {s}", .{ename}),
@@ -291,7 +292,7 @@ pub const Manager = struct {
 
         const c = try Client.init(w, m.d);
         try m.clients.put(w, c);
-        _ = x11.XSelectInput(m.d, w, x11.SubstructureRedirectMask | x11.SubstructureNotifyMask);
+        _ = x11.XSelectInput(m.d, w, x11.EnterWindowMask | x11.SubstructureRedirectMask | x11.SubstructureNotifyMask);
         _ = x11.XSetWindowBorderWidth(m.d, w, 3);
         _ = x11.XSetWindowBorder(m.d, w, bcb);
 
@@ -389,6 +390,12 @@ pub const Manager = struct {
             log.info("Resizing to ({}, {})", .{ w, h });
             _ = x11.XResizeWindow(m.d, ev.window, w, h);
         }
+    }
+
+    fn onEnterNotify(m: *Manager, ev: x11.XCrossingEvent) !void {
+        log.trace("EnterNotify for {}", .{ev.window});
+        if (ev.mode != x11.NotifyNormal or ev.detail == x11.NotifyInferior) return;
+        m.focusClient(try m.getClient(ev.window));
     }
 
     fn sendEvent(m: *Manager, w: x11.Window, protocol: x11.Atom) !void {
