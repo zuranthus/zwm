@@ -2,6 +2,26 @@ const std = @import("std");
 const x11 = @import("x11.zig");
 const log = @import("./log.zig");
 
+const Hotkeys = struct {
+    const Hotkey = struct { mod: c_uint, key: c_ulong, fun: fn (*Manager) void };
+    fn add(m: c_uint, k: c_ulong, f: fn (*Manager) void) Hotkey {
+        return Hotkey{ .mod = m, .key = k, .fun = f };
+    }
+
+    fn killFocused(m: *Manager) void {
+        if (m.focused) |fc| m.killClient(fc) catch {};
+    }
+    fn focusNext(m: *Manager) void {
+        if (m.focused) |fc| m.focusNextClient(fc) catch {};
+    }
+
+    const mod = x11.Mod1Mask;
+    const list = [_]Hotkey{
+        add(mod, x11.XK_C, killFocused),
+        add(mod, x11.XK_Tab, focusNext),
+    };
+};
+
 const Pos = struct {
     x: i32,
     y: i32,
@@ -176,10 +196,8 @@ pub const Manager = struct {
 
         // hotkeys
         _ = x11.XUngrabKey(m.d, x11.AnyKey, x11.AnyModifier, m.root);
-        // kill with mod + C
-        _ = x11.XGrabKey(m.d, x11.XKeysymToKeycode(m.d, x11.XK_C), modKey, m.root, 0, x11.GrabModeAsync, x11.GrabModeAsync);
-        // switch windows with mod + Tab
-        _ = x11.XGrabKey(m.d, x11.XKeysymToKeycode(m.d, x11.XK_Tab), modKey, m.root, 0, x11.GrabModeAsync, x11.GrabModeAsync);
+        for (Hotkeys.list) |hk|
+            _ = x11.XGrabKey(m.d, x11.XKeysymToKeycode(m.d, hk.key), hk.mod, m.root, 0, x11.GrabModeAsync, x11.GrabModeAsync);
 
         log.info("initialized wm", .{});
     }
@@ -440,13 +458,10 @@ pub const Manager = struct {
     }
 
     fn onKeyPress(m: *Manager, ev: x11.XKeyEvent) !void {
-        if (ev.state & modKey == 0) return;
-        if (ev.keycode == x11.XKeysymToKeycode(m.d, x11.XK_C)) {
-            if (m.focused) |fc| try m.killClient(fc);
-        }
-        if (ev.keycode == x11.XKeysymToKeycode(m.d, x11.XK_Tab)) {
-            if (m.focused) |fc| try m.focusNextClient(fc);
-        }
+        for (Hotkeys.list) |hk|
+            // TODO check for exact mod
+            if (ev.keycode == x11.XKeysymToKeycode(m.d, hk.key) and ev.state & hk.mod != 0)
+                hk.fun(m);
     }
 
     fn onKeyRelease(m: *Manager, ev: x11.XKeyEvent) !void {
