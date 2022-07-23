@@ -55,6 +55,17 @@ const Size = struct {
         const maxVal = std.math.maxInt(u32);
         return init(maxVal, maxVal);
     }
+
+    fn sub(l: Size, r: Size) Size {
+        return Size.init(l.w - r.w, l.h - r.h);
+    }
+
+    fn clamp(sz: Size, lower: Size, higher: Size) Size {
+        return Size.init(
+            std.math.clamp(sz.w, lower.w, higher.w),
+            std.math.clamp(sz.h, lower.h, higher.h),
+        );
+    }
 };
 
 const Drag = struct {
@@ -69,6 +80,10 @@ const Client = struct {
     min_size: Size = Size.min(),
     max_size: Size = Size.max(),
 
+    const border_width = 3;
+    const border_color_focused = 0xff8000;
+    const border_color_normal = 0x808080;
+
     const Geometry = struct {
         pos: Pos,
         size: Size,
@@ -77,6 +92,7 @@ const Client = struct {
     fn init(win: x11.Window, d: *x11.Display) !Client {
         var c = Client{ .w = win, .d = d };
         try c.updateSizeHints();
+        _ = x11.XSetWindowBorderWidth(c.d, c.w, border_width);
         return c;
     }
 
@@ -107,6 +123,24 @@ const Client = struct {
             c.max_size = Size.init(hints.max_width, hints.max_height);
         }
     }
+
+    fn setFocused(c: Client, focused: bool) void {
+        _ = x11.XSetWindowBorder(c.d, c.w, if (focused) border_color_focused else border_color_normal);
+    }
+
+    fn move(c: Client, p: Pos) void {
+        _ = x11.XMoveWindow(c.d, c.w, p.x, p.y);
+    }
+
+    fn resize(c: Client, sz: Size) void {
+        const new_size = sz.clamp(c.min_size, c.max_size).sub(Size.init(2 * border_width, 2 * border_width));
+        _ = x11.XResizeWindow(c.d, c.w, new_size.w, new_size.h);
+    }
+
+    fn moveResize(c: Client, p: Pos, sz: Size) void {
+        const new_size = sz.clamp(c.min_size, c.max_size).sub(Size.init(2 * border_width, 2 * border_width));
+        _ = x11.XMoveResizeWindow(c.d, c.w, p.x, p.y, new_size.w, new_size.h);
+    }
 };
 
 pub const Manager = struct {
@@ -119,6 +153,9 @@ pub const Manager = struct {
     drag: Drag = undefined,
     wm_delete: x11.Atom = undefined,
     wm_protocols: x11.Atom = undefined,
+    layoutDirty: bool = false,
+    width: i32 = undefined,
+    height: i32 = undefined,
 
     pub fn init(_: ?[]u8) !Manager {
         if (isInstanceAlive) return error.WmInstanceAlreadyExists;
@@ -159,6 +196,11 @@ pub const Manager = struct {
 
         _ = x11.XGrabServer(m.d);
         defer _ = x11.XUngrabServer(m.d);
+
+        // Update metrics
+        const screen = x11.XDefaultScreen(m.d);
+        m.width = x11.XDisplayWidth(m.d, screen);
+        m.height = x11.XDisplayHeight(m.d, screen);
 
         // manage existing visbile windows
         var root: x11.Window = undefined;
@@ -204,6 +246,8 @@ pub const Manager = struct {
 
     fn startEventLoop(m: *Manager) !void {
         while (true) {
+            if (m.layoutDirty) m.applyLayout();
+
             var e = std.mem.zeroes(x11.XEvent);
             _ = x11.XNextEvent(m.d, &e);
             const ename = x11.eventTypeToString(@intCast(u8, e.type));
@@ -299,9 +343,6 @@ pub const Manager = struct {
         m.focusClient(c);
     }
 
-    const bcf = 0xff8080;
-    const bcb = 0x808080;
-
     fn addClient(m: *Manager, w: x11.Window) !Client {
         if (m.isClient(w)) return error.WindowAlreadyClient;
 
@@ -311,13 +352,13 @@ pub const Manager = struct {
         const c = try Client.init(w, m.d);
         try m.clients.put(w, c);
         _ = x11.XSelectInput(m.d, w, x11.EnterWindowMask | x11.SubstructureRedirectMask | x11.SubstructureNotifyMask);
-        _ = x11.XSetWindowBorderWidth(m.d, w, 3);
-        _ = x11.XSetWindowBorder(m.d, w, bcb);
 
         // move with mod + LB
         _ = x11.XGrabButton(m.d, x11.Button1, modKey, w, 0, x11.ButtonPressMask | x11.ButtonReleaseMask | x11.ButtonMotionMask, x11.GrabModeAsync, x11.GrabModeAsync, x11.None, x11.None);
         // resize with mod + RB
         _ = x11.XGrabButton(m.d, x11.Button3, modKey, w, 0, x11.ButtonPressMask | x11.ButtonReleaseMask | x11.ButtonMotionMask, x11.GrabModeAsync, x11.GrabModeAsync, x11.None, x11.None);
+
+        m.markLayoutDirty();
 
         log.info("Added client {}", .{w});
         log.trace("min_size ({}, {}), max_size ({}, {})", .{ c.min_size.w, c.min_size.h, c.max_size.w, c.max_size.h });
@@ -337,6 +378,7 @@ pub const Manager = struct {
         if (m.isClientFocused(c)) m.focused = null;
         std.debug.assert(m.clients.orderedRemove(w));
         if (m.clients.count() > 0) m.focusClient(m.clients.values()[0]);
+        m.markLayoutDirty();
         log.info("Removed client {}", .{w});
     }
 
@@ -346,7 +388,7 @@ pub const Manager = struct {
 
     fn clearFocus(m: *Manager) void {
         if (m.focused) |fc| {
-            _ = x11.XSetWindowBorder(m.d, fc.w, bcb);
+            fc.setFocused(false);
             _ = x11.XSetInputFocus(m.d, x11.PointerRoot, x11.RevertToPointerRoot, x11.CurrentTime);
             m.focused = null;
             log.info("Unfocused client {}", .{fc.w});
@@ -361,8 +403,8 @@ pub const Manager = struct {
 
         _ = x11.XSetInputFocus(m.d, c.w, x11.RevertToPointerRoot, x11.CurrentTime);
         m.focused = c;
-        _ = x11.XSetWindowBorder(m.d, c.w, bcf);
-        _ = x11.XRaiseWindow(m.d, c.w);
+        c.setFocused(true);
+        //_ = x11.XRaiseWindow(m.d, c.w);
         log.info("Focused client {}", .{c.w});
     }
 
@@ -467,6 +509,23 @@ pub const Manager = struct {
     fn onKeyRelease(m: *Manager, ev: x11.XKeyEvent) !void {
         _ = m;
         _ = ev;
+    }
+
+    fn markLayoutDirty(m: *Manager) void {
+        m.layoutDirty = true;
+    }
+
+    fn applyLayout(m: *Manager) void {
+        log.trace("Apply layout", .{});
+        //const master = 50.0;
+        //const mw = @floatToInt(i32, @intToFloat(f32, m.width) * master / 100.0);
+        const cs = m.clients;
+        if (cs.count() == 1) {
+            const c = cs.values()[0];
+            c.moveResize(Pos.init(0, 0), Size.init(m.width, m.height));
+        }
+
+        m.layoutDirty = false;
     }
 };
 
