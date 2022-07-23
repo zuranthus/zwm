@@ -154,8 +154,7 @@ pub const Manager = struct {
     wm_delete: x11.Atom = undefined,
     wm_protocols: x11.Atom = undefined,
     layoutDirty: bool = false,
-    width: i32 = undefined,
-    height: i32 = undefined,
+    size: Size = undefined,
 
     pub fn init(_: ?[]u8) !Manager {
         if (isInstanceAlive) return error.WmInstanceAlreadyExists;
@@ -199,8 +198,8 @@ pub const Manager = struct {
 
         // Update metrics
         const screen = x11.XDefaultScreen(m.d);
-        m.width = x11.XDisplayWidth(m.d, screen);
-        m.height = x11.XDisplayHeight(m.d, screen);
+        m.size.w = @intCast(u32, x11.XDisplayWidth(m.d, screen));
+        m.size.h = @intCast(u32, x11.XDisplayHeight(m.d, screen));
 
         // manage existing visbile windows
         var root: x11.Window = undefined;
@@ -519,10 +518,27 @@ pub const Manager = struct {
         log.trace("Apply layout", .{});
         //const master = 50.0;
         //const mw = @floatToInt(i32, @intToFloat(f32, m.width) * master / 100.0);
-        const cs = m.clients;
-        if (cs.count() == 1) {
-            const c = cs.values()[0];
-            c.moveResize(Pos.init(0, 0), Size.init(m.width, m.height));
+        const cs = m.clients.values();
+        switch (cs.len) {
+            0 => return,
+            1 => {
+                cs[0].moveResize(Pos.init(0, 0), m.size);
+            },
+            else => {
+                const master = 50.0;
+                const msize = Size.init(
+                    @floatToInt(u32, @intToFloat(f32, m.size.w) * master / 100.0),
+                    m.size.h,
+                );
+                const ssize = Size.init(m.size.w - msize.w, m.size.h / (cs.len - 1));
+                var pos = Pos.init(0, 0);
+                cs[0].moveResize(pos, msize);
+                pos.x += @intCast(i32, msize.w);
+                for (cs[1..]) |c| {
+                    c.moveResize(pos, ssize);
+                    pos.y += @intCast(i32, ssize.h);
+                }
+            },
         }
 
         m.layoutDirty = false;
