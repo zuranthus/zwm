@@ -18,6 +18,7 @@ const Hotkeys = struct {
         if (m.focused) |fc| m.focusPrevClient(fc);
     }
     fn swapMain(m: *Manager) void {
+        if (m.clients.items.len <= 1) return;
         if (m.focused) |fc| {
             var i = m.getClientIndex(fc.w) catch unreachable;
             if (i == 0) i = 1; // if already main, swap with the first secondary
