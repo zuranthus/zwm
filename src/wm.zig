@@ -12,13 +12,28 @@ const Hotkeys = struct {
         if (m.focused) |fc| m.killClient(fc) catch {};
     }
     fn focusNext(m: *Manager) void {
-        if (m.focused) |fc| m.focusNextClient(fc) catch {};
+        if (m.focused) |fc| m.focusNextClient(fc);
+    }
+    fn focusPrev(m: *Manager) void {
+        if (m.focused) |fc| m.focusPrevClient(fc);
+    }
+    fn swapMain(m: *Manager) void {
+        if (m.focused) |fc| {
+            var i = m.getClientIndex(fc.w) catch unreachable;
+            if (i == 0) i = 1; // if already main, swap with the first secondary
+            const c = m.clients.orderedRemove(i);
+            m.clients.insert(0, c) catch unreachable;
+            m.focusClient(c);
+            m.markLayoutDirty();
+        }
     }
 
     const mod = x11.Mod1Mask;
     const list = [_]Hotkey{
         add(mod, x11.XK_C, killFocused),
-        add(mod, x11.XK_Tab, focusNext),
+        add(mod, x11.XK_J, focusNext),
+        add(mod, x11.XK_K, focusPrev),
+        add(mod, x11.XK_Return, swapMain),
     };
 };
 
@@ -93,6 +108,7 @@ const Client = struct {
         var c = Client{ .w = win, .d = d };
         try c.updateSizeHints();
         _ = x11.XSetWindowBorderWidth(c.d, c.w, border_width);
+        c.setFocused(false);
         return c;
     }
 
@@ -144,7 +160,7 @@ const Client = struct {
 };
 
 pub const Manager = struct {
-    const Clients = std.AutoArrayHashMap(x11.Window, Client);
+    const Clients = std.ArrayList(Client);
 
     d: *x11.Display,
     root: x11.Window,
@@ -223,7 +239,7 @@ pub const Manager = struct {
                     log.info("Ignoring {}", .{w});
                 }
             }
-            if (m.clients.count() > 0) m.focusClient(m.clients.values()[0]);
+            if (m.clients.items.len > 0) m.focusClient(m.clients.items[0]);
         }
 
         // show cursor
@@ -312,7 +328,7 @@ pub const Manager = struct {
         const w = ev.window;
         log.trace("UnmapNotify for {}", .{w});
 
-        if (m.clients.get(w) == null) {
+        if (!m.isClient(w)) {
             log.trace("ignore UnmapNotify for non-client window {}", .{w});
         } else {
             try m.removeClient(w);
@@ -349,7 +365,7 @@ pub const Manager = struct {
         if (x11.XGetWindowAttributes(m.d, w, &wa) == 0) return error.Error;
 
         const c = try Client.init(w, m.d);
-        try m.clients.put(w, c);
+        try m.clients.append(c);
         _ = x11.XSelectInput(m.d, w, x11.EnterWindowMask | x11.SubstructureRedirectMask | x11.SubstructureNotifyMask);
 
         // move with mod + LB
@@ -365,18 +381,29 @@ pub const Manager = struct {
     }
 
     fn getClient(m: *Manager, w: x11.Window) !Client {
-        return m.clients.get(w) orelse return error.WindowIsNotClient;
+        return for (m.clients.items) |c| {
+            if (c.w == w) break c;
+        } else error.WindowIsNotClient;
+    }
+
+    fn getClientIndex(m: *Manager, w: x11.Window) !usize {
+        return for (m.clients.items) |c, i| {
+            if (c.w == w) break i;
+        } else error.WindowIsNotClient;
     }
 
     fn isClient(m: *Manager, w: x11.Window) bool {
-        return m.clients.contains(w);
+        return for (m.clients.items) |c| {
+            if (c.w == w) break true;
+        } else false;
     }
 
     fn removeClient(m: *Manager, w: x11.Window) !void {
-        const c = try m.getClient(w);
+        const i = try m.getClientIndex(w);
+        const c = m.clients.items[i];
         if (m.isClientFocused(c)) m.focused = null;
-        std.debug.assert(m.clients.orderedRemove(w));
-        if (m.clients.count() > 0) m.focusClient(m.clients.values()[0]);
+        _ = m.clients.orderedRemove(i);
+        if (m.clients.items.len > 0) m.focusClient(m.clients.items[0]);
         m.markLayoutDirty();
         log.info("Removed client {}", .{w});
     }
@@ -485,17 +512,16 @@ pub const Manager = struct {
         _ = x11.XKillClient(m.d, c.w);
     }
 
-    fn focusNextClient(m: *Manager, c: Client) !void {
-        if (m.focused == null) return;
+    fn focusPrevClient(m: *Manager, c: Client) void {
+        var i = m.getClientIndex(c.w) catch unreachable;
+        if (i > 0) i -= 1 else i = m.clients.items.len - 1;
+        m.focusClient(m.clients.items[i]);
+    }
 
-        const keys = m.clients.keys();
-        var i = for (keys) |k, i| {
-            if (k == c.w) break i;
-        } else return error.WindowIsNotClient;
-
-        i = (i + 1) % keys.len;
-        const nc = m.clients.values()[i];
-        m.focusClient(nc);
+    fn focusNextClient(m: *Manager, c: Client) void {
+        var i = m.getClientIndex(c.w) catch unreachable;
+        i = (i + 1) % m.clients.items.len;
+        m.focusClient(m.clients.items[i]);
     }
 
     fn onKeyPress(m: *Manager, ev: x11.XKeyEvent) !void {
@@ -518,7 +544,7 @@ pub const Manager = struct {
         log.trace("Apply layout", .{});
         //const master = 50.0;
         //const mw = @floatToInt(i32, @intToFloat(f32, m.width) * master / 100.0);
-        const cs = m.clients.values();
+        const cs = m.clients.items;
         switch (cs.len) {
             0 => return,
             1 => {
