@@ -24,7 +24,26 @@ const Hotkeys = struct {
             if (i == 0) i = 1; // if already main, swap with the first secondary
             const c = m.clients.orderedRemove(i);
             m.clients.insert(0, c) catch unreachable;
-            m.focusClient(c);
+            m.markLayoutDirty();
+        }
+    }
+    fn moveNext(m: *Manager) void {
+        if (m.clients.items.len <= 1) return;
+        if (m.focused) |fc| {
+            const i = m.getClientIndex(fc.w) catch unreachable;
+            const new_i = (i + 1) % m.clients.items.len;
+            const c = m.clients.orderedRemove(i);
+            m.clients.insert(new_i, c) catch unreachable;
+            m.markLayoutDirty();
+        }
+    }
+    fn movePrev(m: *Manager) void {
+        if (m.clients.items.len <= 1) return;
+        if (m.focused) |fc| {
+            const i = m.getClientIndex(fc.w) catch unreachable;
+            const new_i = if (i != 0) (i - 1) else (m.clients.items.len - 1);
+            const c = m.clients.orderedRemove(i);
+            m.clients.insert(new_i, c) catch unreachable;
             m.markLayoutDirty();
         }
     }
@@ -35,6 +54,8 @@ const Hotkeys = struct {
         add(mod, x11.XK_J, focusNext),
         add(mod, x11.XK_K, focusPrev),
         add(mod, x11.XK_Return, swapMain),
+        add(mod | x11.ShiftMask, x11.XK_J, moveNext),
+        add(mod | x11.ShiftMask, x11.XK_K, movePrev),
     };
 };
 
@@ -526,8 +547,7 @@ pub const Manager = struct {
 
     fn onKeyPress(m: *Manager, ev: x11.XKeyEvent) !void {
         for (Hotkeys.list) |hk|
-            // TODO check for exact mod
-            if (ev.keycode == x11.XKeysymToKeycode(m.d, hk.key) and ev.state & hk.mod != 0)
+            if (ev.keycode == x11.XKeysymToKeycode(m.d, hk.key) and ev.state ^ hk.mod == 0)
                 hk.fun(m);
     }
 
@@ -542,8 +562,6 @@ pub const Manager = struct {
 
     fn applyLayout(m: *Manager) void {
         log.trace("Apply layout", .{});
-        //const master = 50.0;
-        //const mw = @floatToInt(i32, @intToFloat(f32, m.width) * master / 100.0);
         const cs = m.clients.items;
         switch (cs.len) {
             0 => return,
