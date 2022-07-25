@@ -424,8 +424,7 @@ pub const Manager = struct {
 
     fn focusClient(m: *Manager, c: Client) void {
         if (m.focused) |fc| {
-            if (fc.w == c.w) return;
-            m.clearFocus();
+            if (fc.w != c.w) fc.setFocused(false);
         }
 
         _ = x11.XSetInputFocus(m.d, c.w, x11.RevertToPointerRoot, x11.CurrentTime);
@@ -569,6 +568,11 @@ pub const Manager = struct {
         }
 
         m.layoutDirty = false;
+
+        var ev: x11.XEvent = undefined;
+        _ = x11.XSync(m.d, 0);
+        // skip EnterNotify events
+        while (x11.XCheckMaskEvent(m.d, x11.EnterWindowMask, &ev) != 0) {}
     }
 };
 
