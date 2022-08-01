@@ -563,24 +563,25 @@ pub const Manager = struct {
     fn applyLayout(m: *Manager) void {
         log.trace("Apply layout", .{});
         const cs = m.clients.items;
+        const gap = 5;
         switch (cs.len) {
             0 => return,
             1 => {
-                cs[0].moveResize(Pos.init(0, 0), m.size);
+                cs[0].moveResize(Pos.init(gap, gap), m.size.sub(Size.init(2 * gap, 2 * gap)));
             },
             else => {
                 const master = 50.0;
                 const msize = Size.init(
-                    @floatToInt(u32, @intToFloat(f32, m.size.w) * master / 100.0),
-                    m.size.h,
+                    @floatToInt(u32, @intToFloat(f32, m.size.w) * master / 100.0) - gap,
+                    m.size.h - 2 * gap,
                 );
-                const ssize = Size.init(m.size.w - msize.w, m.size.h / (cs.len - 1));
-                var pos = Pos.init(0, 0);
+                var pos = Pos.init(gap, gap);
                 cs[0].moveResize(pos, msize);
-                pos.x += @intCast(i32, msize.w);
+                pos.x += @intCast(i32, msize.w) + gap;
+                const ssize = Size.init(m.size.w - @intCast(u32, pos.x) - gap, (m.size.h - gap) / (cs.len - 1) - gap);
                 for (cs[1..]) |c| {
                     c.moveResize(pos, ssize);
-                    pos.y += @intCast(i32, ssize.h);
+                    pos.y += @intCast(i32, ssize.h) + gap;
                 }
             },
         }
