@@ -47,10 +47,20 @@ const Hotkeys = struct {
             m.markLayoutDirty();
         }
     }
+    fn incMaster(m: *Manager) void {
+        m.masterSize = std.math.min(m.masterSize + 10.0, 90.0);
+        m.markLayoutDirty();
+    }
+    fn decMaster(m: *Manager) void {
+        m.masterSize = std.math.max(m.masterSize - 10.0, 10.0);
+        m.markLayoutDirty();
+    }
 
     const mod = x11.Mod1Mask;
     const list = [_]Hotkey{
         add(mod, x11.XK_C, killFocused),
+        add(mod, x11.XK_H, decMaster),
+        add(mod, x11.XK_L, incMaster),
         add(mod, x11.XK_J, focusNext),
         add(mod, x11.XK_K, focusPrev),
         add(mod, x11.XK_Return, swapMain),
@@ -193,6 +203,7 @@ pub const Manager = struct {
     wm_protocols: x11.Atom = undefined,
     layoutDirty: bool = false,
     size: Size = undefined,
+    masterSize: f32 = 50.0,
 
     pub fn init(_: ?[]u8) !Manager {
         if (isInstanceAlive) return error.WmInstanceAlreadyExists;
@@ -570,9 +581,8 @@ pub const Manager = struct {
                 cs[0].moveResize(Pos.init(gap, gap), m.size.sub(Size.init(2 * gap, 2 * gap)));
             },
             else => {
-                const master = 50.0;
                 const msize = Size.init(
-                    @floatToInt(u32, @intToFloat(f32, m.size.w) * master / 100.0) - gap,
+                    @floatToInt(u32, @intToFloat(f32, m.size.w) * m.masterSize / 100.0) - gap,
                     m.size.h - 2 * gap,
                 );
                 var pos = Pos.init(gap, gap);
