@@ -1,6 +1,9 @@
 const std = @import("std");
 const x11 = @import("x11.zig");
 const log = @import("./log.zig");
+const c_import = @cImport({
+    @cInclude("unistd.h");
+});
 
 const Hotkeys = struct {
     const Hotkey = struct { mod: c_uint, key: c_ulong, fun: fn (*Manager) void };
@@ -55,6 +58,15 @@ const Hotkeys = struct {
         m.masterSize = std.math.max(m.masterSize - 10.0, 10.0);
         m.markLayoutDirty();
     }
+    fn spawn(m: *Manager) void {
+        const pid = std.os.fork() catch unreachable;
+        if (pid == 0) {
+            _ = c_import.close(x11.XConnectionNumber(m.d));
+            _ = c_import.setsid();
+            _ = c_import.execvp("alacritty", null);
+            std.os.exit(0);
+        }
+    }
 
     const mod = x11.Mod1Mask;
     const list = [_]Hotkey{
@@ -64,6 +76,7 @@ const Hotkeys = struct {
         add(mod, x11.XK_J, focusNext),
         add(mod, x11.XK_K, focusPrev),
         add(mod, x11.XK_Return, swapMain),
+        add(mod | x11.ShiftMask, x11.XK_Return, spawn),
         add(mod | x11.ShiftMask, x11.XK_J, moveNext),
         add(mod | x11.ShiftMask, x11.XK_K, movePrev),
     };
