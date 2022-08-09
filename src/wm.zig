@@ -5,6 +5,12 @@ const c_import = @cImport({
     @cInclude("unistd.h");
 });
 
+const Error = error{
+    Error,
+    WindowIsNotClient,
+    XGetWMNormalHintsFailed,
+};
+
 const Hotkeys = struct {
     const Hotkey = struct { mod: c_uint, key: c_ulong, fun: fn (*Manager) void };
     fn add(m: c_uint, k: c_ulong, f: fn (*Manager) void) Hotkey {
@@ -12,50 +18,67 @@ const Hotkeys = struct {
     }
 
     fn killFocused(m: *Manager) void {
-        if (m.focused) |fc| m.killClient(fc) catch {};
+        const t = m.activeTag();
+        if (t.activeClient()) |ac| m.killClient(ac) catch unreachable;
     }
     fn focusNext(m: *Manager) void {
-        if (m.focused) |fc| m.focusNextClient(fc);
+        const t = m.activeTag();
+        if (t.activeWindow) |aw| {
+            const i = t.findClientIndex(aw) catch unreachable;
+            const next_i = (i + 1) % t.clients.items.len;
+            m.focusWindow(t.clients.items[next_i].w) catch unreachable;
+        }
     }
     fn focusPrev(m: *Manager) void {
-        if (m.focused) |fc| m.focusPrevClient(fc);
+        const t = m.activeTag();
+        if (t.activeWindow) |aw| {
+            const i = t.findClientIndex(aw) catch unreachable;
+            const prev_i = if (i > 0) i - 1 else t.clients.items.len - 1;
+            m.focusWindow(t.clients.items[prev_i].w) catch unreachable;
+        }
     }
     fn swapMain(m: *Manager) void {
-        if (m.clients.items.len <= 1) return;
-        if (m.focused) |fc| {
-            var i = m.getClientIndex(fc.w) catch unreachable;
-            if (i == 0) i = 1; // if already main, swap with the first secondary
-            const c = m.clients.orderedRemove(i);
-            m.clients.insert(0, c) catch unreachable;
+        const t = m.activeTag();
+        const cs = &t.clients;
+        if (cs.items.len <= 1) return;
+        if (t.activeWindow) |aw| {
+            var i = t.findClientIndex(aw) catch unreachable;
+            if (i == 0) i = 1; // if already main, swap with the next client
+            const c = cs.orderedRemove(i);
+            cs.insert(0, c) catch unreachable;
             m.markLayoutDirty();
         }
     }
     fn moveNext(m: *Manager) void {
-        if (m.clients.items.len <= 1) return;
-        if (m.focused) |fc| {
-            const i = m.getClientIndex(fc.w) catch unreachable;
-            const new_i = (i + 1) % m.clients.items.len;
-            const c = m.clients.orderedRemove(i);
-            m.clients.insert(new_i, c) catch unreachable;
+        const t = m.activeTag();
+        const cs = &t.clients;
+        if (cs.items.len <= 1) return;
+        if (t.activeWindow) |aw| {
+            const i = t.findClientIndex(aw) catch unreachable;
+            const next_i = (i + 1) % cs.items.len;
+            const c = cs.orderedRemove(i);
+            cs.insert(next_i, c) catch unreachable;
             m.markLayoutDirty();
         }
     }
     fn movePrev(m: *Manager) void {
-        if (m.clients.items.len <= 1) return;
-        if (m.focused) |fc| {
-            const i = m.getClientIndex(fc.w) catch unreachable;
-            const new_i = if (i != 0) (i - 1) else (m.clients.items.len - 1);
-            const c = m.clients.orderedRemove(i);
-            m.clients.insert(new_i, c) catch unreachable;
+        const t = m.activeTag();
+        const cs = &t.clients;
+        if (cs.items.len <= 1) return;
+        if (t.activeWindow) |aw| {
+            const i = t.findClientIndex(aw) catch unreachable;
+            const prev_i = if (i > 0) i - 1 else cs.items.len - 1;
+            const c = cs.orderedRemove(i);
+            cs.insert(prev_i, c) catch unreachable;
             m.markLayoutDirty();
         }
     }
     fn incMaster(m: *Manager) void {
-        m.masterSize = std.math.min(m.masterSize + 10.0, 90.0);
+        m.mainSize = std.math.min(m.mainSize + 10.0, 90.0);
         m.markLayoutDirty();
     }
     fn decMaster(m: *Manager) void {
-        m.masterSize = std.math.max(m.masterSize - 10.0, 10.0);
+        m.mainSize = std.math.max(m.mainSize - 10.0, 10.0);
         m.markLayoutDirty();
     }
     fn spawn(m: *Manager) void {
@@ -157,7 +180,7 @@ const Client = struct {
         return c;
     }
 
-    fn getGeometry(c: Client) !Geometry {
+    fn getGeometry(c: Client) Error!Geometry {
         var root: x11.Window = undefined;
         var x: i32 = 0;
         var y: i32 = 0;
@@ -166,7 +189,7 @@ const Client = struct {
         var bw: u32 = 0;
         var depth: u32 = 0;
         if (x11.XGetGeometry(c.d, c.w, &root, &x, &y, &w, &h, &bw, &depth) == 0)
-            return error.Error;
+            return Error.Error;
         return Geometry{ .pos = Pos.init(x, y), .size = Size.init(w, h) };
     }
 
@@ -174,7 +197,7 @@ const Client = struct {
         var hints: *x11.XSizeHints = x11.XAllocSizeHints();
         defer _ = x11.XFree(hints);
         var supplied: c_long = undefined;
-        if (x11.XGetWMNormalHints(c.d, c.w, hints, &supplied) == 0) return error.XGetWMNormalHintsFailed;
+        if (x11.XGetWMNormalHints(c.d, c.w, hints, &supplied) == 0) return Error.XGetWMNormalHintsFailed;
         c.min_size = Size.init(1, 1);
         c.max_size = Size.max();
         if ((hints.flags & x11.PMinSize != 0) and hints.min_width > 0 and hints.min_height > 0) {
@@ -204,36 +227,100 @@ const Client = struct {
     }
 };
 
-pub const Manager = struct {
-    const Clients = std.ArrayList(Client);
+const TileLayout = struct {
+    pub fn apply(clients: []const Client, origin: Pos, size: Size, mainFactor: f32) void {
+        const gap = 5;
+        var pos = origin.plus(Pos.init(gap, gap));
+        const len = clients.len;
+        switch (len) {
+            0 => return,
+            1 => {
+                clients[0].moveResize(pos, size.sub(Size.init(2 * gap, 2 * gap)));
+            },
+            else => {
+                const msize = Size.init(
+                    @floatToInt(u32, @intToFloat(f32, size.w) * mainFactor) - gap,
+                    size.h - 2 * gap,
+                );
+                clients[0].moveResize(pos, msize);
+                pos.x += @intCast(i32, msize.w) + gap;
+                const ssize = Size.init(size.w - @intCast(u32, msize.w) - 2 * gap, (size.h - gap) / (len - 1) - gap);
+                for (clients[1..]) |c| {
+                    c.moveResize(pos, ssize);
+                    pos.y += @intCast(i32, ssize.h) + gap;
+                }
+            },
+        }
+    }
+};
 
+const Clients = std.ArrayList(Client);
+
+const Tag = struct {
+    num: i8,
+    clients: Clients = Clients.init(std.heap.c_allocator),
+    activeWindow: ?x11.Window = null,
+
+    pub fn deinit(self: *Tag) void {
+        self.clients.deinit();
+    }
+
+    pub fn findClientIndex(self: *const Tag, w: x11.Window) Error!usize {
+        return for (self.clients.items) |*c, i| {
+            if (c.w == w) return i;
+        } else return Error.WindowIsNotClient;
+    }
+    pub fn findClient(self: *const Tag, w: x11.Window) !*Client {
+        const i = self.findClientIndex(w) catch return Error.WindowIsNotClient;
+        return &self.clients.items[i];
+    }
+    pub fn activeClient(self: *const Tag) ?*Client {
+        if (self.activeWindow) |aw| {
+            const ac = self.findClient(aw) catch unreachable;
+            return ac;
+        }
+        return null;
+    }
+};
+
+pub const Manager = struct {
+    tags: [10]Tag = undefined,
     d: *x11.Display,
     root: x11.Window,
-    focused: ?Client = null,
-    clients: Clients = Clients.init(std.heap.c_allocator),
     drag: Drag = undefined,
     wm_delete: x11.Atom = undefined,
     wm_protocols: x11.Atom = undefined,
     layoutDirty: bool = false,
     size: Size = undefined,
-    masterSize: f32 = 50.0,
+    mainSize: f32 = 50.0,
+    _activeTag: u8 = 0,
+
+    fn activeTagClients(self: *Manager) *Clients {
+        return &self.activeTag().clients;
+    }
+    fn activeTag(self: *Manager) *Tag {
+        return &self.tags[self._activeTag];
+    }
 
     pub fn init(_: ?[]u8) !Manager {
         if (isInstanceAlive) return error.WmInstanceAlreadyExists;
         const d = x11.XOpenDisplay(":1") orelse return error.CannotOpenDisplay;
         const r = x11.XDefaultRootWindow(d);
         isInstanceAlive = true;
-        return Manager{
+        var m = Manager{
             .d = d,
             .root = r,
         };
+        for (m.tags) |*t, i| t.* = Tag{ .num = @intCast(i8, i) };
+        return m;
     }
 
     pub fn deinit(m: *Manager) void {
         std.debug.assert(isInstanceAlive);
         _ = x11.XUngrabKey(m.d, x11.AnyKey, x11.AnyModifier, m.root);
         _ = x11.XCloseDisplay(m.d);
-        m.clients.deinit();
+
+        for (m.tags) |*tag| tag.deinit();
         isInstanceAlive = false;
         log.info("destroyed wm", .{});
     }
@@ -279,13 +366,16 @@ pub const Manager = struct {
                     continue;
                 }
                 // Only add windows that are visible and don't set override_redirect
-                if (wa.override_redirect == 0 and wa.map_state == x11.IsViewable) {
-                    _ = m.addClient(w) catch |e| log.err("Add client {} failed with {}", .{ w, e });
+                if (wa.override_redirect == 0 and wa.map_state == x11.IsViewable) add_client: {
+                    _ = m.addClient(w) catch |e| {
+                        log.err("Add client {} failed with {}", .{ w, e });
+                        break :add_client;
+                    };
+                    if (m.activeTag().activeWindow == null) m.focusWindow(w) catch unreachable;
                 } else {
                     log.info("Ignoring {}", .{w});
                 }
             }
-            if (m.clients.items.len > 0) m.focusClient(m.clients.items[0]);
         }
 
         // show cursor
@@ -399,19 +489,19 @@ pub const Manager = struct {
 
     fn onMapRequest(m: *Manager, ev: x11.XMapRequestEvent) !void {
         log.trace("MapRequest for {}", .{ev.window});
-        const c = try m.addClient(ev.window);
+        _ = try m.addClient(ev.window);
         _ = x11.XMapWindow(m.d, ev.window);
-        m.focusClient(c);
+        m.focusWindow(ev.window) catch unreachable;
     }
 
-    fn addClient(m: *Manager, w: x11.Window) !Client {
+    fn addClient(m: *Manager, w: x11.Window) !*Client {
         if (m.isClient(w)) return error.WindowAlreadyClient;
 
         var wa = std.mem.zeroes(x11.XWindowAttributes);
         if (x11.XGetWindowAttributes(m.d, w, &wa) == 0) return error.Error;
 
-        const c = try Client.init(w, m.d);
-        try m.clients.append(c);
+        const clients = m.activeTagClients();
+        try clients.append(try Client.init(w, m.d));
         _ = x11.XSelectInput(m.d, w, x11.EnterWindowMask | x11.SubstructureRedirectMask | x11.SubstructureNotifyMask);
 
         // move with mod + LB
@@ -421,67 +511,62 @@ pub const Manager = struct {
 
         m.markLayoutDirty();
 
+        const c = &clients.items[clients.items.len - 1];
         log.info("Added client {}", .{w});
         log.trace("min_size ({}, {}), max_size ({}, {})", .{ c.min_size.w, c.min_size.h, c.max_size.w, c.max_size.h });
         return c;
     }
 
-    fn getClient(m: *Manager, w: x11.Window) !Client {
-        return for (m.clients.items) |c| {
-            if (c.w == w) break c;
-        } else error.WindowIsNotClient;
-    }
-
-    fn getClientIndex(m: *Manager, w: x11.Window) !usize {
-        return for (m.clients.items) |c, i| {
-            if (c.w == w) break i;
-        } else error.WindowIsNotClient;
+    fn findClient(m: *Manager, w: x11.Window) Error!*Client {
+        return for (m.tags) |*t| {
+            if (t.findClient(w)) |c| return c else |_| {}
+        } else Error.WindowIsNotClient;
     }
 
     fn isClient(m: *Manager, w: x11.Window) bool {
-        return for (m.clients.items) |c| {
-            if (c.w == w) break true;
-        } else false;
+        _ = m.findClient(w) catch return false;
+        return true;
     }
 
     fn removeClient(m: *Manager, w: x11.Window) !void {
-        const i = try m.getClientIndex(w);
-        const c = m.clients.items[i];
-        if (m.isClientFocused(c)) m.focused = null;
-        _ = m.clients.orderedRemove(i);
-        if (m.clients.items.len > 0) m.focusClient(m.clients.items[0]);
+        var refocus = false;
+        for (m.tags) |*t| {
+            const i = t.findClientIndex(w) catch continue;
+            const cs = &t.clients;
+            _ = cs.orderedRemove(i);
+            if (t.activeWindow == w) {
+                t.activeWindow = if (cs.items.len > 0) cs.items[0].w else null;
+                refocus = (t.num == m._activeTag and t.activeWindow != null);
+            }
+            break;
+        } else return Error.WindowIsNotClient;
+
+        if (refocus and m.activeTag().activeWindow != null)
+            m.focusWindow(m.activeTag().activeWindow.?) catch unreachable;
         m.markLayoutDirty();
         log.info("Removed client {}", .{w});
     }
 
-    fn isClientFocused(m: *Manager, c: Client) bool {
-        return if (m.focused) |fc| fc.w == c.w else false;
-    }
+    fn focusWindow(m: *Manager, w: x11.Window) !void {
+        const t = m.activeTag();
+        const c = try t.findClient(w);
 
-    fn clearFocus(m: *Manager) void {
-        if (m.focused) |fc| {
-            fc.setFocused(false);
-            _ = x11.XSetInputFocus(m.d, x11.PointerRoot, x11.RevertToPointerRoot, x11.CurrentTime);
-            m.focused = null;
-            log.info("Unfocused client {}", .{fc.w});
-        }
-    }
+        // change border of currently active window, if any
+        if (t.activeWindow) |aw|
+            if (aw != w) {
+                const ac = t.findClient(aw) catch unreachable;
+                ac.setFocused(false);
+            };
 
-    fn focusClient(m: *Manager, c: Client) void {
-        if (m.focused) |fc| {
-            if (fc.w != c.w) fc.setFocused(false);
-        }
-
-        _ = x11.XSetInputFocus(m.d, c.w, x11.RevertToPointerRoot, x11.CurrentTime);
-        m.focused = c;
+        _ = x11.XSetInputFocus(m.d, w, x11.RevertToPointerRoot, x11.CurrentTime);
+        t.activeWindow = w;
         c.setFocused(true);
-        //_ = x11.XRaiseWindow(m.d, c.w);
-        log.info("Focused client {}", .{c.w});
+        log.info("Focused client {}", .{w});
     }
 
     fn onButtonPress(m: *Manager, ev: x11.XButtonEvent) !void {
         log.trace("ButtonPress for {}", .{ev.window});
-        const client = try m.getClient(ev.window);
+        const client = try m.findClient(ev.window);
         const g = try client.getGeometry();
         m.drag = Drag{
             .start_pos = Pos.init(ev.x_root, ev.y_root),
@@ -498,7 +583,7 @@ pub const Manager = struct {
 
     fn onMotionNotify(m: *Manager, ev: x11.XMotionEvent) !void {
         log.trace("MotionNotify for {}", .{ev.window});
-        const c = try m.getClient(ev.window);
+        const c = try m.findClient(ev.window);
         const drag_pos = Pos.init(ev.x_root, ev.y_root);
         const delta = drag_pos.minus(m.drag.start_pos);
 
@@ -526,7 +611,7 @@ pub const Manager = struct {
     fn onEnterNotify(m: *Manager, ev: x11.XCrossingEvent) !void {
         log.trace("EnterNotify for {}", .{ev.window});
         if (ev.mode != x11.NotifyNormal or ev.detail == x11.NotifyInferior) return;
-        m.focusClient(try m.getClient(ev.window));
+        try m.focusWindow(ev.window);
     }
 
     fn sendEvent(m: *Manager, w: x11.Window, protocol: x11.Atom) !void {
@@ -539,7 +624,7 @@ pub const Manager = struct {
         if (x11.XSendEvent(m.d, w, 0, x11.NoEventMask, &event) == 0) return error.Error;
     }
 
-    fn killClient(m: *Manager, c: Client) !void {
+    fn killClient(m: *Manager, c: *Client) !void {
         var protocols: [*c]x11.Atom = null;
         var count: i32 = 0;
         _ = x11.XGetWMProtocols(m.d, c.w, &protocols, &count);
@@ -555,18 +640,6 @@ pub const Manager = struct {
         }
         log.info("Killing {}", .{c.w});
         _ = x11.XKillClient(m.d, c.w);
-    }
-
-    fn focusPrevClient(m: *Manager, c: Client) void {
-        var i = m.getClientIndex(c.w) catch unreachable;
-        if (i > 0) i -= 1 else i = m.clients.items.len - 1;
-        m.focusClient(m.clients.items[i]);
-    }
-
-    fn focusNextClient(m: *Manager, c: Client) void {
-        var i = m.getClientIndex(c.w) catch unreachable;
-        i = (i + 1) % m.clients.items.len;
-        m.focusClient(m.clients.items[i]);
     }
 
     fn onKeyPress(m: *Manager, ev: x11.XKeyEvent) !void {
@@ -586,29 +659,7 @@ pub const Manager = struct {
 
     fn applyLayout(m: *Manager) void {
         log.trace("Apply layout", .{});
-        const cs = m.clients.items;
-        const gap = 5;
-        switch (cs.len) {
-            0 => return,
-            1 => {
-                cs[0].moveResize(Pos.init(gap, gap), m.size.sub(Size.init(2 * gap, 2 * gap)));
-            },
-            else => {
-                const msize = Size.init(
-                    @floatToInt(u32, @intToFloat(f32, m.size.w) * m.masterSize / 100.0) - gap,
-                    m.size.h - 2 * gap,
-                );
-                var pos = Pos.init(gap, gap);
-                cs[0].moveResize(pos, msize);
-                pos.x += @intCast(i32, msize.w) + gap;
-                const ssize = Size.init(m.size.w - @intCast(u32, pos.x) - gap, (m.size.h - gap) / (cs.len - 1) - gap);
-                for (cs[1..]) |c| {
-                    c.moveResize(pos, ssize);
-                    pos.y += @intCast(i32, ssize.h) + gap;
-                }
-            },
-        }
-
+        TileLayout.apply(m.activeTagClients().items, Pos.init(0, 0), m.size, m.mainSize / 100.0);
         m.layoutDirty = false;
 
         var ev: x11.XEvent = undefined;
