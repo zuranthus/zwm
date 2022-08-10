@@ -18,58 +18,49 @@ const Hotkeys = struct {
     }
 
     fn killFocused(m: *Manager) void {
-        const t = m.activeTag();
-        if (t.activeClient()) |ac| m.killClient(ac) catch unreachable;
+        if (m.activeClient()) |ac| m.killClient(ac) catch unreachable;
     }
     fn focusNext(m: *Manager) void {
         const t = m.activeTag();
-        if (t.activeWindow) |aw| {
-            const i = t.findClientIndex(aw) catch unreachable;
+        if (t.activeClientIndex()) |i| {
             const next_i = (i + 1) % t.clients.items.len;
             m.focusWindow(t.clients.items[next_i].w) catch unreachable;
         }
     }
     fn focusPrev(m: *Manager) void {
         const t = m.activeTag();
-        if (t.activeWindow) |aw| {
-            const i = t.findClientIndex(aw) catch unreachable;
+        if (t.activeClientIndex()) |i| {
             const prev_i = if (i > 0) i - 1 else t.clients.items.len - 1;
             m.focusWindow(t.clients.items[prev_i].w) catch unreachable;
         }
     }
     fn swapMain(m: *Manager) void {
         const t = m.activeTag();
-        const cs = &t.clients;
-        if (cs.items.len <= 1) return;
-        if (t.activeWindow) |aw| {
-            var i = t.findClientIndex(aw) catch unreachable;
-            if (i == 0) i = 1; // if already main, swap with the next client
-            const c = cs.orderedRemove(i);
-            cs.insert(0, c) catch unreachable;
+        if (t.clients.items.len <= 1) return;
+        if (t.activeClientIndex()) |i| {
+            // if already main, swap with the next client
+            const c = t.clients.orderedRemove(if (i != 0) i else 1);
+            t.clients.insert(0, c) catch unreachable;
             m.markLayoutDirty();
         }
     }
     fn moveNext(m: *Manager) void {
         const t = m.activeTag();
-        const cs = &t.clients;
-        if (cs.items.len <= 1) return;
-        if (t.activeWindow) |aw| {
-            const i = t.findClientIndex(aw) catch unreachable;
-            const next_i = (i + 1) % cs.items.len;
-            const c = cs.orderedRemove(i);
-            cs.insert(next_i, c) catch unreachable;
+        if (t.clients.items.len <= 1) return;
+        if (t.activeClientIndex()) |i| {
+            const next_i = (i + 1) % t.clients.items.len;
+            const c = t.clients.orderedRemove(i);
+            t.clients.insert(next_i, c) catch unreachable;
             m.markLayoutDirty();
         }
     }
     fn movePrev(m: *Manager) void {
         const t = m.activeTag();
-        const cs = &t.clients;
-        if (cs.items.len <= 1) return;
-        if (t.activeWindow) |aw| {
-            const i = t.findClientIndex(aw) catch unreachable;
-            const prev_i = if (i > 0) i - 1 else cs.items.len - 1;
-            const c = cs.orderedRemove(i);
-            cs.insert(prev_i, c) catch unreachable;
+        if (t.clients.items.len <= 1) return;
+        if (t.activeClientIndex()) |i| {
+            const prev_i = if (i > 0) i - 1 else t.clients.items.len - 1;
+            const c = t.clients.orderedRemove(i);
+            t.clients.insert(prev_i, c) catch unreachable;
             m.markLayoutDirty();
         }
     }
@@ -274,12 +265,11 @@ const Tag = struct {
         const i = self.findClientIndex(w) catch return Error.WindowIsNotClient;
         return &self.clients.items[i];
     }
+    pub fn activeClientIndex(self: *const Tag) ?usize {
+        return if (self.activeWindow) |aw| self.findClientIndex(aw) catch unreachable else null;
+    }
     pub fn activeClient(self: *const Tag) ?*Client {
-        if (self.activeWindow) |aw| {
-            const ac = self.findClient(aw) catch unreachable;
-            return ac;
-        }
-        return null;
+        return if (self.activeClientIndex()) |i| &self.clients.items[i] else null;
     }
 };
 
@@ -300,6 +290,12 @@ pub const Manager = struct {
     }
     fn activeTag(self: *Manager) *Tag {
         return &self.tags[self._activeTag];
+    }
+    fn activeClient(self: *Manager) ?*Client {
+        return self.activeTag().activeClient();
+    }
+    fn activeWindow(self: *Manager) ?x11.Window {
+        return self.activeTag().activeWindow;
     }
 
     pub fn init(_: ?[]u8) !Manager {
@@ -371,7 +367,7 @@ pub const Manager = struct {
                         log.err("Add client {} failed with {}", .{ w, e });
                         break :add_client;
                     };
-                    if (m.activeTag().activeWindow == null) m.focusWindow(w) catch unreachable;
+                    if (m.activeWindow() == null) m.focusWindow(w) catch unreachable;
                 } else {
                     log.info("Ignoring {}", .{w});
                 }
