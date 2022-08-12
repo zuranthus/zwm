@@ -18,20 +18,24 @@ const Hotkeys = struct {
     }
 
     fn killFocused(m: *Manager) void {
-        if (m.activeClient()) |ac| m.killClient(ac) catch unreachable;
+        if (m.focusedClient()) |fc| m.killClient(fc) catch unreachable;
     }
     fn focusNext(m: *Manager) void {
         const t = m.activeTag();
         if (t.activeClientIndex()) |i| {
             const next_i = (i + 1) % t.clients.items.len;
-            m.focusWindow(t.clients.items[next_i].w) catch unreachable;
+            const w = t.clients.items[next_i].w;
+            t.setActiveWindow(w) catch unreachable;
+            m.focusActiveWindow();
         }
     }
     fn focusPrev(m: *Manager) void {
         const t = m.activeTag();
         if (t.activeClientIndex()) |i| {
             const prev_i = if (i > 0) i - 1 else t.clients.items.len - 1;
-            m.focusWindow(t.clients.items[prev_i].w) catch unreachable;
+            const w = t.clients.items[prev_i].w;
+            t.setActiveWindow(w) catch unreachable;
+            m.focusActiveWindow();
         }
     }
     fn swapMain(m: *Manager) void {
@@ -81,6 +85,12 @@ const Hotkeys = struct {
             std.os.exit(0);
         }
     }
+    fn selectTag1(m: *Manager) void {
+        m.selectTag(1);
+    }
+    fn selectTag2(m: *Manager) void {
+        m.selectTag(2);
+    }
 
     const mod = x11.Mod1Mask;
     const list = [_]Hotkey{
@@ -93,6 +103,8 @@ const Hotkeys = struct {
         add(mod | x11.ShiftMask, x11.XK_Return, spawn),
         add(mod | x11.ShiftMask, x11.XK_J, moveNext),
         add(mod | x11.ShiftMask, x11.XK_K, movePrev),
+        add(mod, x11.XK_1, selectTag1),
+        add(mod, x11.XK_2, selectTag2),
     };
 };
 
@@ -167,7 +179,7 @@ const Client = struct {
         var c = Client{ .w = win, .d = d };
         try c.updateSizeHints();
         _ = x11.XSetWindowBorderWidth(c.d, c.w, border_width);
-        c.setFocused(false);
+        c.setActive(false);
         return c;
     }
 
@@ -199,7 +211,7 @@ const Client = struct {
         }
     }
 
-    fn setFocused(c: Client, focused: bool) void {
+    fn setActive(c: Client, focused: bool) void {
         _ = x11.XSetWindowBorder(c.d, c.w, if (focused) border_color_focused else border_color_normal);
     }
 
@@ -271,6 +283,27 @@ const Tag = struct {
     pub fn activeClient(self: *const Tag) ?*Client {
         return if (self.activeClientIndex()) |i| &self.clients.items[i] else null;
     }
+    pub fn clearActiveWindow(self: *Tag) void {
+        if (self.activeClient()) |ac| ac.setActive(false);
+        self.activeWindow = null;
+    }
+    pub fn setActiveWindow(self: *Tag, w: x11.Window) !void {
+        self.clearActiveWindow();
+        const c = try self.findClient(w);
+        c.setActive(true);
+        self.activeWindow = w;
+    }
+    pub fn removeClientWindow(self: *Tag, w: x11.Window) bool {
+        for (self.clients.items) |*c, i|
+            if (c.w == w) {
+                if (self.activeWindow == w) self.clearActiveWindow();
+                _ = self.clients.orderedRemove(i);
+                if (self.clients.items.len > 0)
+                    self.setActiveWindow(self.clients.items[0].w) catch unreachable;
+                return true;
+            };
+        return false;
+    }
 };
 
 pub const Manager = struct {
@@ -283,7 +316,8 @@ pub const Manager = struct {
     layoutDirty: bool = false,
     size: Size = undefined,
     mainSize: f32 = 50.0,
-    _activeTag: u8 = 0,
+    _activeTag: u8 = 1,
+    focusedWindow: ?x11.Window = null,
 
     fn activeTagClients(self: *Manager) *Clients {
         return &self.activeTag().clients;
@@ -291,11 +325,31 @@ pub const Manager = struct {
     fn activeTag(self: *Manager) *Tag {
         return &self.tags[self._activeTag];
     }
-    fn activeClient(self: *Manager) ?*Client {
-        return self.activeTag().activeClient();
+    fn focusedClient(self: *Manager) ?*Client {
+        const t = self.activeTag();
+        std.debug.assert(self.focusedWindow == null and t.activeWindow == null or self.focusedWindow.? == t.activeWindow.?);
+        return t.activeClient();
     }
-    fn activeWindow(self: *Manager) ?x11.Window {
-        return self.activeTag().activeWindow;
+
+    pub fn selectTag(self: *Manager, tag: u8) void {
+        if (tag < 1 or tag > 2) unreachable;
+        if (tag == self._activeTag) return;
+
+        self._activeTag = tag;
+        self.focusActiveWindow();
+        log.info("Selected tag {} with {} clients", .{ tag, self.activeTagClients().items.len });
+    }
+
+    fn focusActiveWindow(self: *Manager) void {
+        if (self.activeTag().activeWindow) |aw| {
+            self.focusedWindow = aw;
+            _ = x11.XSetInputFocus(self.d, aw, x11.RevertToPointerRoot, x11.CurrentTime);
+            log.info("Focused client {}", .{aw});
+        } else {
+            self.focusedWindow = null;
+            _ = x11.XSetInputFocus(self.d, x11.PointerRoot, x11.RevertToPointerRoot, x11.CurrentTime);
+            log.info("Cleared focus", .{});
+        }
     }
 
     pub fn init(_: ?[]u8) !Manager {
@@ -367,7 +421,10 @@ pub const Manager = struct {
                         log.err("Add client {} failed with {}", .{ w, e });
                         break :add_client;
                     };
-                    if (m.activeWindow() == null) m.focusWindow(w) catch unreachable;
+                    if (m.focusedWindow == null) {
+                        try m.activeTag().setActiveWindow(w);
+                        m.focusActiveWindow();
+                    }
                 } else {
                     log.info("Ignoring {}", .{w});
                 }
@@ -487,7 +544,8 @@ pub const Manager = struct {
         log.trace("MapRequest for {}", .{ev.window});
         _ = try m.addClient(ev.window);
         _ = x11.XMapWindow(m.d, ev.window);
-        m.focusWindow(ev.window) catch unreachable;
+        try m.activeTag().setActiveWindow(ev.window);
+        m.focusActiveWindow();
     }
 
     fn addClient(m: *Manager, w: x11.Window) !*Client {
@@ -496,6 +554,7 @@ pub const Manager = struct {
         var wa = std.mem.zeroes(x11.XWindowAttributes);
         if (x11.XGetWindowAttributes(m.d, w, &wa) == 0) return error.Error;
 
+        // TODO move to Tag.addClient(c) ?
         const clients = m.activeTagClients();
         try clients.append(try Client.init(w, m.d));
         _ = x11.XSelectInput(m.d, w, x11.EnterWindowMask | x11.SubstructureRedirectMask | x11.SubstructureNotifyMask);
@@ -524,40 +583,13 @@ pub const Manager = struct {
         return true;
     }
 
-    fn removeClient(m: *Manager, w: x11.Window) !void {
-        var refocus = false;
-        for (m.tags) |*t| {
-            const i = t.findClientIndex(w) catch continue;
-            const cs = &t.clients;
-            _ = cs.orderedRemove(i);
-            if (t.activeWindow == w) {
-                t.activeWindow = if (cs.items.len > 0) cs.items[0].w else null;
-                refocus = (t.num == m._activeTag and t.activeWindow != null);
-            }
-            break;
+    fn removeClient(self: *Manager, w: x11.Window) !void {
+        for (self.tags) |*t| {
+            if (t.removeClientWindow(w)) break;
         } else return Error.WindowIsNotClient;
-
-        if (refocus and m.activeTag().activeWindow != null)
-            m.focusWindow(m.activeTag().activeWindow.?) catch unreachable;
-        m.markLayoutDirty();
+        self.focusActiveWindow();
+        self.markLayoutDirty();
         log.info("Removed client {}", .{w});
-    }
-
-    fn focusWindow(m: *Manager, w: x11.Window) !void {
-        const t = m.activeTag();
-        const c = try t.findClient(w);
-
-        // change border of currently active window, if any
-        if (t.activeWindow) |aw|
-            if (aw != w) {
-                const ac = t.findClient(aw) catch unreachable;
-                ac.setFocused(false);
-            };
-
-        _ = x11.XSetInputFocus(m.d, w, x11.RevertToPointerRoot, x11.CurrentTime);
-        t.activeWindow = w;
-        c.setFocused(true);
-        log.info("Focused client {}", .{w});
     }
 
     fn onButtonPress(m: *Manager, ev: x11.XButtonEvent) !void {
@@ -607,7 +639,8 @@ pub const Manager = struct {
     fn onEnterNotify(m: *Manager, ev: x11.XCrossingEvent) !void {
         log.trace("EnterNotify for {}", .{ev.window});
         if (ev.mode != x11.NotifyNormal or ev.detail == x11.NotifyInferior) return;
-        try m.focusWindow(ev.window);
+        try m.activeTag().setActiveWindow(ev.window);
+        m.focusActiveWindow();
     }
 
     fn sendEvent(m: *Manager, w: x11.Window, protocol: x11.Atom) !void {
