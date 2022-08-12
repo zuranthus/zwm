@@ -304,6 +304,11 @@ const Tag = struct {
             };
         return false;
     }
+    pub fn deactivate(self: *Tag) void {
+        for (self.clients.items) |*c| {
+            c.move(Pos.init(100000, 100000));
+        }
+    }
 };
 
 pub const Manager = struct {
@@ -335,8 +340,10 @@ pub const Manager = struct {
         if (tag < 1 or tag > 2) unreachable;
         if (tag == self._activeTag) return;
 
+        self.activeTag().deactivate();
         self._activeTag = tag;
         self.focusActiveWindow();
+        self.markLayoutDirty();
         log.info("Selected tag {} with {} clients", .{ tag, self.activeTagClients().items.len });
     }
 
