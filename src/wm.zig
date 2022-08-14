@@ -78,27 +78,69 @@ const Hotkeys = struct {
             std.os.exit(0);
         }
     }
+
+    // TODO replace with generic hotkeys
     fn selectTag1(m: *Manager) void {
         m.selectTag(1);
     }
     fn selectTag2(m: *Manager) void {
         m.selectTag(2);
     }
-    fn moveToTag1(m: *Manager) void {
-        if (m.activeTag == 1) return;
+    fn selectTag3(m: *Manager) void {
+        m.selectTag(3);
+    }
+    fn selectTag4(m: *Manager) void {
+        m.selectTag(4);
+    }
+    fn selectTag5(m: *Manager) void {
+        m.selectTag(5);
+    }
+    fn selectTag6(m: *Manager) void {
+        m.selectTag(6);
+    }
+    fn selectTag7(m: *Manager) void {
+        m.selectTag(7);
+    }
+    fn selectTag8(m: *Manager) void {
+        m.selectTag(8);
+    }
+    fn selectTag9(m: *Manager) void {
+        m.selectTag(9);
+    }
+    fn moveToTag(m: *Manager, tag: u8) void {
+        if (m.activeTag == tag) return;
         if (m.focusedClient) |fc| {
-            fc.data.tag = 1;
+            fc.data.tag = tag;
             m.focusClient(m.firstActiveClient());
             m.markLayoutDirty();
         }
     }
+    fn moveToTag1(m: *Manager) void {
+        moveToTag(m, 1);
+    }
     fn moveToTag2(m: *Manager) void {
-        if (m.activeTag == 2) return;
-        if (m.focusedClient) |fc| {
-            fc.data.tag = 2;
-            m.focusClient(m.firstActiveClient());
-            m.markLayoutDirty();
-        }
+        moveToTag(m, 2);
+    }
+    fn moveToTag3(m: *Manager) void {
+        moveToTag(m, 3);
+    }
+    fn moveToTag4(m: *Manager) void {
+        moveToTag(m, 4);
+    }
+    fn moveToTag5(m: *Manager) void {
+        moveToTag(m, 5);
+    }
+    fn moveToTag6(m: *Manager) void {
+        moveToTag(m, 6);
+    }
+    fn moveToTag7(m: *Manager) void {
+        moveToTag(m, 7);
+    }
+    fn moveToTag8(m: *Manager) void {
+        moveToTag(m, 8);
+    }
+    fn moveToTag9(m: *Manager) void {
+        moveToTag(m, 9);
     }
 
     const mod = x11.Mod1Mask;
@@ -114,8 +156,22 @@ const Hotkeys = struct {
         add(mod | x11.ShiftMask, x11.XK_K, movePrev),
         add(mod, x11.XK_1, selectTag1),
         add(mod, x11.XK_2, selectTag2),
+        add(mod, x11.XK_3, selectTag3),
+        add(mod, x11.XK_4, selectTag4),
+        add(mod, x11.XK_5, selectTag5),
+        add(mod, x11.XK_6, selectTag6),
+        add(mod, x11.XK_7, selectTag7),
+        add(mod, x11.XK_8, selectTag8),
+        add(mod, x11.XK_9, selectTag9),
         add(mod | x11.ShiftMask, x11.XK_1, moveToTag1),
         add(mod | x11.ShiftMask, x11.XK_2, moveToTag2),
+        add(mod | x11.ShiftMask, x11.XK_3, moveToTag3),
+        add(mod | x11.ShiftMask, x11.XK_4, moveToTag4),
+        add(mod | x11.ShiftMask, x11.XK_5, moveToTag5),
+        add(mod | x11.ShiftMask, x11.XK_6, moveToTag6),
+        add(mod | x11.ShiftMask, x11.XK_7, moveToTag7),
+        add(mod | x11.ShiftMask, x11.XK_8, moveToTag8),
+        add(mod | x11.ShiftMask, x11.XK_9, moveToTag9),
     };
 };
 
