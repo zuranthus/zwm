@@ -1,192 +1,15 @@
 const std = @import("std");
 const x11 = @import("x11.zig");
 const log = @import("./log.zig");
-const c_import = @cImport({
-    @cInclude("unistd.h");
-});
+const hotkeys = @import("hotkeys.zig");
+const client_import = @import("client.zig");
+const Client = client_import.Client;
 
-const Error = error{
-    Error,
-    WindowIsNotClient,
-    XGetWMNormalHintsFailed,
-};
+const vec = @import("vec.zig");
+const Pos = vec.Pos;
+const Size = vec.Size;
 
-const Hotkeys = struct {
-    const Hotkey = struct { mod: c_uint, key: c_ulong, fun: fn (*Manager) void };
-    fn add(m: c_uint, k: c_ulong, f: fn (*Manager) void) Hotkey {
-        return Hotkey{ .mod = m, .key = k, .fun = f };
-    }
-
-    fn killFocused(m: *Manager) void {
-        if (m.focusedClient) |fc| m.killClient(fc) catch unreachable;
-    }
-    fn focusNext(m: *Manager) void {
-        if (m.focusedClient) |fc| {
-            const next = m.nextActiveClient(fc) orelse m.firstActiveClient();
-            if (next) |c| m.focusClient(c);
-        }
-    }
-    fn focusPrev(m: *Manager) void {
-        if (m.focusedClient) |fc| {
-            const prev = m.prevActiveClient(fc) orelse m.lastActiveClient();
-            if (prev) |c| m.focusClient(c);
-        }
-    }
-    fn swapMain(m: *Manager) void {
-        if (m.focusedClient) |fc| {
-            const mc = m.firstActiveClient() orelse unreachable;
-            // if already main, swap with the next client
-            const new_mc = if (fc != mc) fc else m.nextActiveClient(mc);
-            if (new_mc) |nm| {
-                m.clients.remove(nm);
-                m.clients.prepend(nm);
-                m.markLayoutDirty();
-                m.focusClient(nm);
-            }
-        }
-    }
-    fn moveNext(m: *Manager) void {
-        if (m.focusedClient) |fc| {
-            const next = m.nextActiveClient(fc);
-            m.clients.remove(fc);
-            if (next) |c| m.clients.insertAfter(c, fc) else m.clients.prepend(fc);
-            m.markLayoutDirty();
-        }
-    }
-    fn movePrev(m: *Manager) void {
-        if (m.focusedClient) |fc| {
-            const prev = m.prevActiveClient(fc);
-            m.clients.remove(fc);
-            if (prev) |c| m.clients.insertBefore(c, fc) else m.clients.append(fc);
-            m.markLayoutDirty();
-        }
-    }
-    fn incMaster(m: *Manager) void {
-        m.mainSize = std.math.min(m.mainSize + 10.0, 80.0);
-        m.markLayoutDirty();
-    }
-    fn decMaster(m: *Manager) void {
-        m.mainSize = std.math.max(m.mainSize - 10.0, 20.0);
-        m.markLayoutDirty();
-    }
-    fn spawn(m: *Manager) void {
-        const pid = std.os.fork() catch unreachable;
-        if (pid == 0) {
-            _ = c_import.close(x11.XConnectionNumber(m.d));
-            _ = c_import.setsid();
-            _ = c_import.execvp("alacritty", null);
-            std.os.exit(0);
-        }
-    }
-
-    // TODO replace with generic hotkeys
-    fn selectTag1(m: *Manager) void {
-        m.selectTag(1);
-    }
-    fn selectTag2(m: *Manager) void {
-        m.selectTag(2);
-    }
-    fn selectTag3(m: *Manager) void {
-        m.selectTag(3);
-    }
-    fn selectTag4(m: *Manager) void {
-        m.selectTag(4);
-    }
-    fn selectTag5(m: *Manager) void {
-        m.selectTag(5);
-    }
-    fn selectTag6(m: *Manager) void {
-        m.selectTag(6);
-    }
-    fn selectTag7(m: *Manager) void {
-        m.selectTag(7);
-    }
-    fn selectTag8(m: *Manager) void {
-        m.selectTag(8);
-    }
-    fn selectTag9(m: *Manager) void {
-        m.selectTag(9);
-    }
-    fn moveToTag(m: *Manager, tag: u8) void {
-        if (m.activeTag == tag) return;
-        if (m.focusedClient) |fc| {
-            fc.data.tag = tag;
-            m.focusClient(m.firstActiveClient());
-            m.markLayoutDirty();
-        }
-    }
-    fn moveToTag1(m: *Manager) void {
-        moveToTag(m, 1);
-    }
-    fn moveToTag2(m: *Manager) void {
-        moveToTag(m, 2);
-    }
-    fn moveToTag3(m: *Manager) void {
-        moveToTag(m, 3);
-    }
-    fn moveToTag4(m: *Manager) void {
-        moveToTag(m, 4);
-    }
-    fn moveToTag5(m: *Manager) void {
-        moveToTag(m, 5);
-    }
-    fn moveToTag6(m: *Manager) void {
-        moveToTag(m, 6);
-    }
-    fn moveToTag7(m: *Manager) void {
-        moveToTag(m, 7);
-    }
-    fn moveToTag8(m: *Manager) void {
-        moveToTag(m, 8);
-    }
-    fn moveToTag9(m: *Manager) void {
-        moveToTag(m, 9);
-    }
-
-    const mod = x11.Mod1Mask;
-    const list = [_]Hotkey{
-        add(mod, x11.XK_C, killFocused),
-        add(mod, x11.XK_H, decMaster),
-        add(mod, x11.XK_L, incMaster),
-        add(mod, x11.XK_J, focusNext),
-        add(mod, x11.XK_K, focusPrev),
-        add(mod, x11.XK_Return, swapMain),
-        add(mod | x11.ShiftMask, x11.XK_Return, spawn),
-        add(mod | x11.ShiftMask, x11.XK_J, moveNext),
-        add(mod | x11.ShiftMask, x11.XK_K, movePrev),
-        add(mod, x11.XK_1, selectTag1),
-        add(mod, x11.XK_2, selectTag2),
-        add(mod, x11.XK_3, selectTag3),
-        add(mod, x11.XK_4, selectTag4),
-        add(mod, x11.XK_5, selectTag5),
-        add(mod, x11.XK_6, selectTag6),
-        add(mod, x11.XK_7, selectTag7),
-        add(mod, x11.XK_8, selectTag8),
-        add(mod, x11.XK_9, selectTag9),
-        add(mod | x11.ShiftMask, x11.XK_1, moveToTag1),
-        add(mod | x11.ShiftMask, x11.XK_2, moveToTag2),
-        add(mod | x11.ShiftMask, x11.XK_3, moveToTag3),
-        add(mod | x11.ShiftMask, x11.XK_4, moveToTag4),
-        add(mod | x11.ShiftMask, x11.XK_5, moveToTag5),
-        add(mod | x11.ShiftMask, x11.XK_6, moveToTag6),
-        add(mod | x11.ShiftMask, x11.XK_7, moveToTag7),
-        add(mod | x11.ShiftMask, x11.XK_8, moveToTag8),
-        add(mod | x11.ShiftMask, x11.XK_9, moveToTag9),
-    };
-};
-
-const IntVec2 = struct {
-    x: i32,
-    y: i32,
-
-    fn init(x: anytype, y: anytype) IntVec2 {
-        return .{ .x = @intCast(i32, x), .y = @intCast(i32, y) };
-    }
-};
-const Pos = IntVec2;
-const Size = IntVec2;
-
-const Drag = struct {
+const DragState = struct {
     start_pos: Pos,
     frame_pos: Pos,
     frame_size: Size,
@@ -194,78 +17,6 @@ const Drag = struct {
 
 const ClientList = std.TailQueue(Client);
 const ClientNode = ClientList.Node;
-
-const Client = struct {
-    w: x11.Window,
-    d: *x11.Display,
-    tag: u8,
-    min_size: Size = undefined,
-    max_size: Size = undefined,
-
-    const border_width = 3;
-    const border_color_focused = 0xff8000;
-    const border_color_normal = 0x808080;
-
-    const Geometry = struct {
-        pos: Pos,
-        size: Size,
-    };
-
-    fn init(win: x11.Window, t: u8, d: *x11.Display) Client {
-        var c = Client{ .w = win, .tag = t, .d = d };
-        c.setFocusedBorder(false);
-        _ = x11.XSetWindowBorderWidth(c.d, c.w, border_width);
-        c.updateSizeHints() catch unreachable;
-        return c;
-    }
-
-    fn getGeometry(c: Client) Error!Geometry {
-        var root: x11.Window = undefined;
-        var x: i32 = 0;
-        var y: i32 = 0;
-        var w: u32 = 0;
-        var h: u32 = 0;
-        var bw: u32 = 0;
-        var depth: u32 = 0;
-        if (x11.XGetGeometry(c.d, c.w, &root, &x, &y, &w, &h, &bw, &depth) == 0)
-            return Error.Error;
-        return Geometry{ .pos = Pos.init(x, y), .size = Size.init(w, h) };
-    }
-
-    fn updateSizeHints(c: *Client) !void {
-        c.min_size = Size.init(1, 1);
-        c.max_size = Size.init(100000, 100000);
-        var hints: *x11.XSizeHints = x11.XAllocSizeHints();
-        defer _ = x11.XFree(hints);
-        var supplied: c_long = undefined;
-        if (x11.XGetWMNormalHints(c.d, c.w, hints, &supplied) == 0) return Error.XGetWMNormalHintsFailed;
-        if ((hints.flags & x11.PMinSize != 0) and hints.min_width > 0 and hints.min_height > 0) {
-            c.min_size = Size.init(hints.min_width, hints.min_height);
-        }
-        if (hints.flags & x11.PMaxSize != 0 and hints.max_width > 0 and hints.max_height > 0) {
-            c.max_size = Size.init(hints.max_width, hints.max_height);
-        }
-    }
-
-    fn setFocusedBorder(c: Client, focused: bool) void {
-        _ = x11.XSetWindowBorder(c.d, c.w, if (focused) border_color_focused else border_color_normal);
-    }
-
-    fn move(c: Client, p: Pos) void {
-        _ = x11.XMoveWindow(c.d, c.w, p.x, p.y);
-    }
-
-    fn resize(c: Client, sz: Size) void {
-        const new_size = sz.clamp(c.min_size, c.max_size).sub(Size.init(2 * border_width, 2 * border_width));
-        _ = x11.XResizeWindow(c.d, c.w, new_size.w, new_size.h);
-    }
-
-    fn moveResize(c: Client, pos: Pos, size: Size) void {
-        const w = @intCast(u32, std.math.clamp(size.x, c.min_size.x, c.max_size.x) - 2 * border_width);
-        const h = @intCast(u32, std.math.clamp(size.y, c.min_size.y, c.max_size.y) - 2 * border_width);
-        _ = x11.XMoveResizeWindow(c.d, c.w, pos.x, pos.y, w, h);
-    }
-};
 
 const TileLayout = struct {
     pub fn apply(m: *const Manager, origin: Pos, size: Size, mainFactor: f32) void {
@@ -300,7 +51,7 @@ const TileLayout = struct {
 pub const Manager = struct {
     d: *x11.Display,
     root: x11.Window,
-    drag: Drag = undefined,
+    drag: DragState = undefined,
     wm_delete: x11.Atom = undefined,
     wm_protocols: x11.Atom = undefined,
     layoutDirty: bool = false,
@@ -331,7 +82,7 @@ pub const Manager = struct {
         log.info("Selected tag {} with {} clients", .{ tag, self.countActiveClients() });
     }
 
-    fn focusClient(self: *Manager, client: ?*ClientNode) void {
+    pub fn focusClient(self: *Manager, client: ?*ClientNode) void {
         std.debug.assert(client == null or client.?.data.tag == self.activeTag);
         if (self.focusedClient) |fc| fc.data.setFocusedBorder(false);
         self.focusedClientPerTag[self.activeTag] = client;
@@ -429,7 +180,7 @@ pub const Manager = struct {
 
         // hotkeys
         _ = x11.XUngrabKey(m.d, x11.AnyKey, x11.AnyModifier, m.root);
-        for (Hotkeys.list) |hk|
+        for (hotkeys.Hotkeys.list) |hk|
             _ = x11.XGrabKey(m.d, x11.XKeysymToKeycode(m.d, hk.key), hk.mod, m.root, 0, x11.GrabModeAsync, x11.GrabModeAsync);
 
         log.info("initialized wm", .{});
@@ -548,6 +299,7 @@ pub const Manager = struct {
         return cn;
     }
 
+    // TODO move all searching/manipulation of clients to Clients
     fn findClient(m: *Manager, w: x11.Window) *ClientNode {
         var it = m.clients.first;
         while (it) |cn| : (it = cn.next) if (cn.data.w == w) return cn;
@@ -578,7 +330,7 @@ pub const Manager = struct {
         log.trace("ButtonPress for {}", .{ev.window});
         const client = &m.findClient(ev.window).data;
         const g = try client.getGeometry();
-        m.drag = Drag{
+        m.drag = DragState{
             .start_pos = Pos.init(ev.x_root, ev.y_root),
             .frame_pos = g.pos,
             .frame_size = g.size,
@@ -595,7 +347,7 @@ pub const Manager = struct {
         log.trace("MotionNotify for {}", .{ev.window});
         const c = &m.findClient(ev.window).data;
         const drag_pos = Pos.init(ev.x_root, ev.y_root);
-        const delta = IntVec2.init(
+        const delta = vec.IntVec2.init(
             drag_pos.x - m.drag.start_pos.x,
             drag_pos.y - m.drag.start_pos.y,
         );
@@ -640,7 +392,7 @@ pub const Manager = struct {
         if (x11.XSendEvent(m.d, w, 0, x11.NoEventMask, &event) == 0) return error.Error;
     }
 
-    fn killClient(m: *Manager, cn: *ClientNode) !void {
+    pub fn killClient(m: *Manager, cn: *ClientNode) !void {
         const c = &cn.data;
         var protocols: [*c]x11.Atom = null;
         var count: i32 = 0;
@@ -660,7 +412,7 @@ pub const Manager = struct {
     }
 
     fn onKeyPress(m: *Manager, ev: x11.XKeyEvent) !void {
-        for (Hotkeys.list) |hk|
+        for (hotkeys.Hotkeys.list) |hk|
             if (ev.keycode == x11.XKeysymToKeycode(m.d, hk.key) and ev.state ^ hk.mod == 0)
                 hk.fun(m);
     }
@@ -670,38 +422,38 @@ pub const Manager = struct {
         _ = ev;
     }
 
-    fn markLayoutDirty(m: *Manager) void {
+    pub fn markLayoutDirty(m: *Manager) void {
         m.layoutDirty = true;
     }
 
-    fn firstActiveClient(self: *const Manager) ?*ClientNode {
+    pub fn firstActiveClient(self: *const Manager) ?*ClientNode {
         var it = self.clients.first;
         while (it) |cn| : (it = cn.next)
             if (cn.data.tag == self.activeTag) return cn;
         return null;
     }
-    fn lastActiveClient(self: *const Manager) ?*ClientNode {
+    pub fn lastActiveClient(self: *const Manager) ?*ClientNode {
         var it = self.clients.last;
         while (it) |cn| : (it = cn.prev)
             if (cn.data.tag == self.activeTag) return cn;
         return null;
     }
 
-    fn nextActiveClient(self: *const Manager, cur: *const ClientNode) ?*ClientNode {
+    pub fn nextActiveClient(self: *const Manager, cur: *const ClientNode) ?*ClientNode {
         var it = cur.next;
         while (it) |cn| : (it = cn.next)
             if (cn.data.tag == self.activeTag) return cn;
         return null;
     }
 
-    fn prevActiveClient(self: *const Manager, cur: *const ClientNode) ?*ClientNode {
+    pub fn prevActiveClient(self: *const Manager, cur: *const ClientNode) ?*ClientNode {
         var it = cur.prev;
         while (it) |cn| : (it = cn.prev)
             if (cn.data.tag == self.activeTag) return cn;
         return null;
     }
 
-    fn countActiveClients(self: *const Manager) usize {
+    pub fn countActiveClients(self: *const Manager) usize {
         var c: usize = 0;
         var it = self.firstActiveClient();
         while (it) |cn| : (it = self.nextActiveClient(cn)) c += 1;
@@ -723,14 +475,3 @@ pub const Manager = struct {
         while (x11.XCheckMaskEvent(m.d, x11.EnterWindowMask, &ev) != 0) {}
     }
 };
-
-pub fn main() !void {
-    log.info("starting", .{});
-
-    var m = try Manager.init(null);
-    defer m.deinit();
-
-    try m.run();
-
-    log.info("exiting", .{});
-}
