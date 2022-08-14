@@ -119,51 +119,16 @@ const Hotkeys = struct {
     };
 };
 
-const Pos = struct {
+const IntVec2 = struct {
     x: i32,
     y: i32,
 
-    fn init(x: anytype, y: anytype) Pos {
+    fn init(x: anytype, y: anytype) IntVec2 {
         return .{ .x = @intCast(i32, x), .y = @intCast(i32, y) };
     }
-
-    fn minus(p: Pos, p2: Pos) Pos {
-        return .{ .x = p.x - p2.x, .y = p.y - p2.y };
-    }
-
-    fn plus(p: Pos, p2: Pos) Pos {
-        return .{ .x = p.x + p2.x, .y = p.y + p2.y };
-    }
 };
-
-const Size = struct {
-    w: u32,
-    h: u32,
-
-    fn init(w: anytype, h: anytype) Size {
-        return .{ .w = @intCast(u32, w), .h = @intCast(u32, h) };
-    }
-
-    fn min() Size {
-        return init(0, 0);
-    }
-
-    fn max() Size {
-        const maxVal = std.math.maxInt(u32);
-        return init(maxVal, maxVal);
-    }
-
-    fn sub(l: Size, r: Size) Size {
-        return Size.init(l.w - r.w, l.h - r.h);
-    }
-
-    fn clamp(sz: Size, lower: Size, higher: Size) Size {
-        return Size.init(
-            std.math.clamp(sz.w, lower.w, higher.w),
-            std.math.clamp(sz.h, lower.h, higher.h),
-        );
-    }
-};
+const Pos = IntVec2;
+const Size = IntVec2;
 
 const Drag = struct {
     start_pos: Pos,
@@ -171,12 +136,15 @@ const Drag = struct {
     frame_size: Size,
 };
 
+const ClientList = std.TailQueue(Client);
+const ClientNode = ClientList.Node;
+
 const Client = struct {
     w: x11.Window,
     d: *x11.Display,
     tag: u8,
-    min_size: Size = Size.min(),
-    max_size: Size = Size.max(),
+    min_size: Size = undefined,
+    max_size: Size = undefined,
 
     const border_width = 3;
     const border_color_focused = 0xff8000;
@@ -209,12 +177,12 @@ const Client = struct {
     }
 
     fn updateSizeHints(c: *Client) !void {
+        c.min_size = Size.init(1, 1);
+        c.max_size = Size.init(100000, 100000);
         var hints: *x11.XSizeHints = x11.XAllocSizeHints();
         defer _ = x11.XFree(hints);
         var supplied: c_long = undefined;
         if (x11.XGetWMNormalHints(c.d, c.w, hints, &supplied) == 0) return Error.XGetWMNormalHintsFailed;
-        c.min_size = Size.init(1, 1);
-        c.max_size = Size.max();
         if ((hints.flags & x11.PMinSize != 0) and hints.min_width > 0 and hints.min_height > 0) {
             c.min_size = Size.init(hints.min_width, hints.min_height);
         }
@@ -236,38 +204,37 @@ const Client = struct {
         _ = x11.XResizeWindow(c.d, c.w, new_size.w, new_size.h);
     }
 
-    fn moveResize(c: Client, p: Pos, sz: Size) void {
-        const new_size = sz.clamp(c.min_size, c.max_size).sub(Size.init(2 * border_width, 2 * border_width));
-        _ = x11.XMoveResizeWindow(c.d, c.w, p.x, p.y, new_size.w, new_size.h);
+    fn moveResize(c: Client, pos: Pos, size: Size) void {
+        const w = @intCast(u32, std.math.clamp(size.x, c.min_size.x, c.max_size.x) - 2 * border_width);
+        const h = @intCast(u32, std.math.clamp(size.y, c.min_size.y, c.max_size.y) - 2 * border_width);
+        _ = x11.XMoveResizeWindow(c.d, c.w, pos.x, pos.y, w, h);
     }
 };
-
-const ClientList = std.TailQueue(Client);
-const ClientNode = ClientList.Node;
 
 const TileLayout = struct {
     pub fn apply(m: *const Manager, origin: Pos, size: Size, mainFactor: f32) void {
         const gap = 5;
-        var pos = origin.plus(Pos.init(gap, gap));
-        const len = m.countActiveClients();
+        var pos = Pos.init(origin.x + gap, origin.y + gap);
+        const len = @intCast(i32, m.countActiveClients());
         switch (len) {
             0 => return,
             1 => {
-                m.firstActiveClient().?.data.moveResize(pos, size.sub(Size.init(2 * gap, 2 * gap)));
+                const main_size = Size.init(size.x - 2 * gap, size.y - 2 * gap);
+                m.firstActiveClient().?.data.moveResize(pos, main_size);
             },
             else => {
                 const msize = Size.init(
-                    @floatToInt(u32, @intToFloat(f32, size.w) * mainFactor) - gap,
-                    size.h - 2 * gap,
+                    @floatToInt(i32, @intToFloat(f32, size.x) * mainFactor) - gap,
+                    size.y - 2 * gap,
                 );
                 var it = m.firstActiveClient();
                 it.?.data.moveResize(pos, msize);
-                pos.x += @intCast(i32, msize.w) + gap;
-                const ssize = Size.init(size.w - @intCast(u32, msize.w) - 2 * gap, (size.h - gap) / (len - 1) - gap);
+                pos.x += msize.x + gap;
+                const ssize = Size.init(size.x - msize.x - 2 * gap, @divTrunc(size.y - gap, len - 1) - gap);
                 it = m.nextActiveClient(it.?);
                 while (it) |cn| : (it = m.nextActiveClient(cn)) {
                     cn.data.moveResize(pos, ssize);
-                    pos.y += @intCast(i32, ssize.h) + gap;
+                    pos.y += ssize.y + gap;
                 }
             },
         }
@@ -298,7 +265,7 @@ pub const Manager = struct {
     }
 
     pub fn selectTag(self: *Manager, tag: u8) void {
-        if (tag < 1 or tag > 2) unreachable;
+        std.debug.assert(1 <= tag and tag <= 9);
         if (tag == self.activeTag) return;
 
         self.activeTag = tag;
@@ -368,8 +335,10 @@ pub const Manager = struct {
 
         // Update metrics
         const screen = x11.XDefaultScreen(m.d);
-        m.size.w = @intCast(u32, x11.XDisplayWidth(m.d, screen));
-        m.size.h = @intCast(u32, x11.XDisplayHeight(m.d, screen));
+        m.size = Size.init(
+            x11.XDisplayWidth(m.d, screen),
+            x11.XDisplayHeight(m.d, screen),
+        );
 
         // manage existing visbile windows
         var root: x11.Window = undefined;
@@ -519,7 +488,7 @@ pub const Manager = struct {
         m.clients.prepend(cn);
         m.markLayoutDirty();
         log.info("Added client {}", .{w});
-        log.trace("min_size ({}, {}), max_size ({}, {})", .{ c.min_size.w, c.min_size.h, c.max_size.w, c.max_size.h });
+        log.trace("min_size ({}, {}), max_size ({}, {})", .{ c.min_size.x, c.min_size.y, c.max_size.x, c.max_size.y });
         return cn;
     }
 
@@ -570,23 +539,27 @@ pub const Manager = struct {
         log.trace("MotionNotify for {}", .{ev.window});
         const c = &m.findClient(ev.window).data;
         const drag_pos = Pos.init(ev.x_root, ev.y_root);
-        const delta = drag_pos.minus(m.drag.start_pos);
+        const delta = IntVec2.init(
+            drag_pos.x - m.drag.start_pos.x,
+            drag_pos.y - m.drag.start_pos.y,
+        );
 
         if (ev.state & x11.Button1Mask != 0) {
-            const frame_pos = m.drag.frame_pos.plus(delta);
-            log.info("Moving to ({}, {})", .{ frame_pos.x, frame_pos.y });
-            _ = x11.XMoveWindow(m.d, c.w, frame_pos.x, frame_pos.y);
+            const x = m.drag.frame_pos.x + delta.x;
+            const y = m.drag.frame_pos.y + delta.y;
+            log.info("Moving to ({}, {})", .{ x, y });
+            _ = x11.XMoveWindow(m.d, c.w, x, y);
         } else if (ev.state & x11.Button3Mask != 0) {
-            var w = @intCast(u32, std.math.max(
-                @intCast(i32, c.min_size.w),
-                @intCast(i32, m.drag.frame_size.w) + delta.x,
+            const w = @intCast(u32, std.math.clamp(
+                m.drag.frame_size.x + delta.x,
+                c.min_size.x,
+                c.max_size.x,
             ));
-            var h = @intCast(u32, std.math.max(
-                @intCast(i32, c.min_size.h),
-                @intCast(i32, m.drag.frame_size.h) + delta.y,
+            const h = @intCast(u32, std.math.clamp(
+                m.drag.frame_size.y + delta.y,
+                c.min_size.y,
+                c.max_size.y,
             ));
-            w = std.math.min(w, c.max_size.w);
-            h = std.math.min(h, c.max_size.h);
 
             log.info("Resizing to ({}, {})", .{ w, h });
             _ = x11.XResizeWindow(m.d, ev.window, w, h);
