@@ -4,6 +4,8 @@ const log = @import("./log.zig");
 const hotkeys = @import("hotkeys.zig");
 const client_import = @import("client.zig");
 const Client = client_import.Client;
+const ClientList = client_import.ClientList;
+const ClientNode = client_import.ClientList.Node;
 
 const vec = @import("vec.zig");
 const Pos = vec.Pos;
@@ -14,9 +16,6 @@ const DragState = struct {
     frame_pos: Pos,
     frame_size: Size,
 };
-
-const ClientList = std.TailQueue(Client);
-const ClientNode = ClientList.Node;
 
 const TileLayout = struct {
     pub fn apply(m: *const Manager, origin: Pos, size: Size, mainFactor: f32) void {
@@ -49,6 +48,8 @@ const TileLayout = struct {
 };
 
 pub const Manager = struct {
+    const Self = @This();
+
     d: *x11.Display,
     root: x11.Window,
     drag: DragState = undefined,
@@ -60,16 +61,7 @@ pub const Manager = struct {
     activeTag: u8 = 1,
     focusedClient: ?*ClientNode = null,
     focusedClientPerTag: [10]?*ClientNode = undefined,
-    clients: ClientList = ClientList{},
-
-    fn createClientNode(c: Client) *ClientNode {
-        var n = std.heap.c_allocator.create(ClientNode) catch unreachable;
-        n.data = c;
-        return n;
-    }
-    fn destroyClientNode(node: *ClientNode) void {
-        std.heap.c_allocator.destroy(node);
-    }
+    clients: ClientList = ClientList.init(),
 
     pub fn selectTag(self: *Manager, tag: u8) void {
         std.debug.assert(1 <= tag and tag <= 9);
@@ -110,12 +102,11 @@ pub const Manager = struct {
         return m;
     }
 
-    pub fn deinit(m: *Manager) void {
+    pub fn deinit(self: *Manager) void {
         std.debug.assert(isInstanceAlive);
-        var it = m.clients.first;
-        while (it) |cn| : (it = cn.next) destroyClientNode(cn);
-        _ = x11.XUngrabKey(m.d, x11.AnyKey, x11.AnyModifier, m.root);
-        _ = x11.XCloseDisplay(m.d);
+        self.clients.deinit();
+        _ = x11.XUngrabKey(self.d, x11.AnyKey, x11.AnyModifier, self.root);
+        _ = x11.XCloseDisplay(self.d);
         isInstanceAlive = false;
         log.info("destroyed wm", .{});
     }
@@ -281,54 +272,50 @@ pub const Manager = struct {
         m.focusClient(cn);
     }
 
-    fn addClient(m: *Manager, w: x11.Window) *ClientNode {
-        std.debug.assert(!m.isClient(w));
+    fn addClient(self: *Self, w: x11.Window) *ClientNode {
+        std.debug.assert(self.clients.findByWindow(w) == null);
         var wa = std.mem.zeroes(x11.XWindowAttributes);
-        if (x11.XGetWindowAttributes(m.d, w, &wa) == 0) unreachable;
-        _ = x11.XSelectInput(m.d, w, x11.EnterWindowMask | x11.SubstructureRedirectMask | x11.SubstructureNotifyMask);
+        if (x11.XGetWindowAttributes(self.d, w, &wa) == 0) unreachable;
+        _ = x11.XSelectInput(self.d, w, x11.EnterWindowMask | x11.SubstructureRedirectMask | x11.SubstructureNotifyMask);
         // move with mod + LB
-        _ = x11.XGrabButton(m.d, x11.Button1, modKey, w, 0, x11.ButtonPressMask | x11.ButtonReleaseMask | x11.ButtonMotionMask, x11.GrabModeAsync, x11.GrabModeAsync, x11.None, x11.None);
+        _ = x11.XGrabButton(
+            self.d,
+            x11.Button1,
+            modKey,
+            w,
+            0,
+            x11.ButtonPressMask | x11.ButtonReleaseMask | x11.ButtonMotionMask,
+            x11.GrabModeAsync,
+            x11.GrabModeAsync,
+            x11.None,
+            x11.None,
+        );
         // resize with mod + RB
-        _ = x11.XGrabButton(m.d, x11.Button3, modKey, w, 0, x11.ButtonPressMask | x11.ButtonReleaseMask | x11.ButtonMotionMask, x11.GrabModeAsync, x11.GrabModeAsync, x11.None, x11.None);
-        const c = Client.init(w, m.activeTag, m.d);
-        const cn = createClientNode(c);
-        m.clients.prepend(cn);
-        m.markLayoutDirty();
+        _ = x11.XGrabButton(self.d, x11.Button3, modKey, w, 0, x11.ButtonPressMask | x11.ButtonReleaseMask | x11.ButtonMotionMask, x11.GrabModeAsync, x11.GrabModeAsync, x11.None, x11.None);
+        const node = self.clients.prependNewClient(w, self.activeTag, self.d);
+        const c = &node.data;
+        self.markLayoutDirty();
         log.info("Added client {}", .{w});
         log.trace("min_size ({}, {}), max_size ({}, {})", .{ c.min_size.x, c.min_size.y, c.max_size.x, c.max_size.y });
-        return cn;
-    }
-
-    // TODO move all searching/manipulation of clients to Clients
-    fn findClient(m: *Manager, w: x11.Window) *ClientNode {
-        var it = m.clients.first;
-        while (it) |cn| : (it = cn.next) if (cn.data.w == w) return cn;
-        unreachable;
-    }
-
-    fn isClient(m: *Manager, w: x11.Window) bool {
-        var it = m.clients.first;
-        while (it) |cn| : (it = cn.next) if (cn.data.w == w) return true;
-        return false;
+        return node;
     }
 
     fn removeClient(self: *Manager, w: x11.Window) void {
-        const cn = self.findClient(w);
-        self.clients.remove(cn);
-        destroyClientNode(cn);
-        self.markLayoutDirty();
-        if (self.focusedClient == cn)
-            self.focusClient(self.firstActiveClient());
+        const node = self.clients.findByWindow(w) orelse unreachable;
+        self.clients.deleteClient(node);
         for (self.focusedClientPerTag) |*tf|
-            if (tf.* == cn) {
+            if (tf.* == node) {
                 tf.* = null;
             };
+        if (self.focusedClient == node)
+            self.focusClient(self.firstActiveClient());
+        self.markLayoutDirty();
         log.info("Removed client {}", .{w});
     }
 
     fn onButtonPress(m: *Manager, ev: x11.XButtonEvent) !void {
         log.trace("ButtonPress for {}", .{ev.window});
-        const client = &m.findClient(ev.window).data;
+        const client = &(m.clients.findByWindow(ev.window) orelse unreachable).data;
         const g = try client.getGeometry();
         m.drag = DragState{
             .start_pos = Pos.init(ev.x_root, ev.y_root),
@@ -345,7 +332,7 @@ pub const Manager = struct {
 
     fn onMotionNotify(m: *Manager, ev: x11.XMotionEvent) !void {
         log.trace("MotionNotify for {}", .{ev.window});
-        const c = &m.findClient(ev.window).data;
+        const c = &(m.clients.findByWindow(ev.window) orelse unreachable).data;
         const drag_pos = Pos.init(ev.x_root, ev.y_root);
         const delta = vec.IntVec2.init(
             drag_pos.x - m.drag.start_pos.x,
@@ -377,7 +364,7 @@ pub const Manager = struct {
     fn onEnterNotify(m: *Manager, ev: x11.XCrossingEvent) !void {
         log.trace("EnterNotify for {}", .{ev.window});
         if (ev.mode != x11.NotifyNormal or ev.detail == x11.NotifyInferior) return;
-        const cn = m.findClient(ev.window);
+        const cn = m.clients.findByWindow(ev.window) orelse unreachable;
         std.debug.assert(cn.data.tag == m.activeTag);
         m.focusClient(cn);
     }
@@ -427,32 +414,29 @@ pub const Manager = struct {
     }
 
     pub fn firstActiveClient(self: *const Manager) ?*ClientNode {
-        var it = self.clients.first;
+        var it = self.clients.list.first;
         while (it) |cn| : (it = cn.next)
             if (cn.data.tag == self.activeTag) return cn;
         return null;
     }
     pub fn lastActiveClient(self: *const Manager) ?*ClientNode {
-        var it = self.clients.last;
+        var it = self.clients.list.last;
         while (it) |cn| : (it = cn.prev)
             if (cn.data.tag == self.activeTag) return cn;
         return null;
     }
-
     pub fn nextActiveClient(self: *const Manager, cur: *const ClientNode) ?*ClientNode {
         var it = cur.next;
         while (it) |cn| : (it = cn.next)
             if (cn.data.tag == self.activeTag) return cn;
         return null;
     }
-
     pub fn prevActiveClient(self: *const Manager, cur: *const ClientNode) ?*ClientNode {
         var it = cur.prev;
         while (it) |cn| : (it = cn.prev)
             if (cn.data.tag == self.activeTag) return cn;
         return null;
     }
-
     pub fn countActiveClients(self: *const Manager) usize {
         var c: usize = 0;
         var it = self.firstActiveClient();
@@ -463,7 +447,7 @@ pub const Manager = struct {
     fn applyLayout(m: *Manager) void {
         log.trace("Apply layout", .{});
         // TODO
-        var it = m.clients.first;
+        var it = m.clients.list.first;
         while (it) |cn| : (it = cn.next)
             if (cn.data.tag != m.activeTag) cn.data.move(Pos.init(100000, 100000));
         TileLayout.apply(m, Pos.init(0, 0), m.size, m.mainSize / 100.0);

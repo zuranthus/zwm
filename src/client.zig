@@ -75,3 +75,50 @@ pub const Client = struct {
         _ = x11.XMoveResizeWindow(c.d, c.w, pos.x, pos.y, w, h);
     }
 };
+
+pub const ClientList = struct {
+    const Self = @This();
+    const List = std.TailQueue(Client);
+    pub const Node = List.Node;
+
+    list: List,
+
+    pub fn init() ClientList {
+        return Self{ .list = List{} };
+    }
+
+    pub fn deinit(self: *Self) void {
+        var it = self.list.first;
+        while (it) |n| : (it = n.next) destroyNode(n);
+    }
+
+    pub fn prependNewClient(self: *Self, window: x11.Window, tag: u8, display: *x11.Display) *Node {
+        const n = createNode();
+        n.data = Client.init(window, tag, display);
+        self.list.prepend(n);
+        return n;
+    }
+
+    pub fn deleteClient(self: *Self, node: *Node) void {
+        self.list.remove(node);
+        destroyNode(node);
+    }
+
+    pub fn isClientWindow(self: *const Self, w: x11.Window) bool {
+        return self.findByWindow(w) != null;
+    }
+
+    pub fn findByWindow(self: *Self, w: x11.Window) ?*Node {
+        var it = self.list.first;
+        while (it) |n| : (it = n.next) if (n.data.w == w) return n;
+        return null;
+    }
+
+    fn createNode() *Node {
+        return std.heap.c_allocator.create(Node) catch unreachable;
+    }
+
+    fn destroyNode(node: *Node) void {
+        std.heap.c_allocator.destroy(node);
+    }
+};

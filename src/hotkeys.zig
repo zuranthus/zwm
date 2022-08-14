@@ -33,8 +33,8 @@ pub const Hotkeys = struct {
             // if already main, swap with the next client
             const new_mc = if (fc != mc) fc else m.nextActiveClient(mc);
             if (new_mc) |nm| {
-                m.clients.remove(nm);
-                m.clients.prepend(nm);
+                m.clients.list.remove(nm);
+                m.clients.list.prepend(nm);
                 m.markLayoutDirty();
                 m.focusClient(nm);
             }
@@ -43,16 +43,16 @@ pub const Hotkeys = struct {
     fn moveNext(m: *Manager) void {
         if (m.focusedClient) |fc| {
             const next = m.nextActiveClient(fc);
-            m.clients.remove(fc);
-            if (next) |c| m.clients.insertAfter(c, fc) else m.clients.prepend(fc);
+            m.clients.list.remove(fc);
+            if (next) |c| m.clients.list.insertAfter(c, fc) else m.clients.list.prepend(fc);
             m.markLayoutDirty();
         }
     }
     fn movePrev(m: *Manager) void {
         if (m.focusedClient) |fc| {
             const prev = m.prevActiveClient(fc);
-            m.clients.remove(fc);
-            if (prev) |c| m.clients.insertBefore(c, fc) else m.clients.append(fc);
+            m.clients.list.remove(fc);
+            if (prev) |c| m.clients.list.insertBefore(c, fc) else m.clients.list.append(fc);
             m.markLayoutDirty();
         }
     }
