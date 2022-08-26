@@ -18,27 +18,26 @@ const DragState = struct {
 };
 
 const TileLayout = struct {
-    pub fn apply(m: *const Manager, origin: Pos, size: Size, mainFactor: f32) void {
+    pub fn apply(iter: ClientList.FilterIter, origin: Pos, size: Size, mainFactor: f32) void {
         const gap = 5;
         var pos = Pos.init(origin.x + gap, origin.y + gap);
-        const len = @intCast(i32, m.countActiveClients());
+        var it = iter;
+        const len = @intCast(i32, iter.count());
         switch (len) {
             0 => return,
             1 => {
                 const main_size = Size.init(size.x - 2 * gap, size.y - 2 * gap);
-                m.firstActiveClient().?.data.moveResize(pos, main_size);
+                it.next().?.data.moveResize(pos, main_size);
             },
             else => {
                 const msize = Size.init(
                     @floatToInt(i32, @intToFloat(f32, size.x) * mainFactor) - gap,
                     size.y - 2 * gap,
                 );
-                var it = m.firstActiveClient();
-                it.?.data.moveResize(pos, msize);
+                it.next().?.data.moveResize(pos, msize);
                 pos.x += msize.x + gap;
                 const ssize = Size.init(size.x - msize.x - 2 * gap, @divTrunc(size.y - gap, len - 1) - gap);
-                it = m.nextActiveClient(it.?);
-                while (it) |cn| : (it = m.nextActiveClient(cn)) {
+                while (it.next()) |cn| {
                     cn.data.moveResize(pos, ssize);
                     pos.y += ssize.y + gap;
                 }
@@ -104,6 +103,7 @@ pub const Manager = struct {
 
     pub fn deinit(self: *Manager) void {
         std.debug.assert(isInstanceAlive);
+        // TODO deinit clients
         self.clients.deinit();
         _ = x11.XUngrabKey(self.d, x11.AnyKey, x11.AnyModifier, self.root);
         _ = x11.XCloseDisplay(self.d);
@@ -413,36 +413,34 @@ pub const Manager = struct {
         m.layoutDirty = true;
     }
 
-    pub fn firstActiveClient(self: *const Manager) ?*ClientNode {
-        var it = self.clients.list.first;
-        while (it) |cn| : (it = cn.next)
-            if (cn.data.tag == self.activeTag) return cn;
-        return null;
+    fn firstActiveClient(self: *const Manager) ?*ClientNode {
+        return client_import.ForwardTagIter.init(self.
+        return self.clients.filterIter(self.activeTag).next();
     }
-    pub fn lastActiveClient(self: *const Manager) ?*ClientNode {
-        var it = self.clients.list.last;
-        while (it) |cn| : (it = cn.prev)
-            if (cn.data.tag == self.activeTag) return cn;
-        return null;
-    }
-    pub fn nextActiveClient(self: *const Manager, cur: *const ClientNode) ?*ClientNode {
-        var it = cur.next;
-        while (it) |cn| : (it = cn.next)
-            if (cn.data.tag == self.activeTag) return cn;
-        return null;
-    }
-    pub fn prevActiveClient(self: *const Manager, cur: *const ClientNode) ?*ClientNode {
-        var it = cur.prev;
-        while (it) |cn| : (it = cn.prev)
-            if (cn.data.tag == self.activeTag) return cn;
-        return null;
-    }
-    pub fn countActiveClients(self: *const Manager) usize {
-        var c: usize = 0;
-        var it = self.firstActiveClient();
-        while (it) |cn| : (it = self.nextActiveClient(cn)) c += 1;
-        return c;
-    }
+    //pub fn lastActiveClient(self: *const Manager) ?*ClientNode {
+    //    var it = self.clients.list.last;
+    //    while (it) |cn| : (it = cn.prev)
+    //        if (cn.data.tag == self.activeTag) return cn;
+    //    return null;
+    //}
+    //pub fn nextActiveClient(self: *const Manager, cur: *const ClientNode) ?*ClientNode {
+    //    var it = cur.next;
+    //    while (it) |cn| : (it = cn.next)
+    //        if (cn.data.tag == self.activeTag) return cn;
+    //    return null;
+    //}
+    //pub fn prevActiveClient(self: *const Manager, cur: *const ClientNode) ?*ClientNode {
+    //    var it = cur.prev;
+    //    while (it) |cn| : (it = cn.prev)
+    //        if (cn.data.tag == self.activeTag) return cn;
+    //    return null;
+    //}
+    //pub fn countActiveClients(self: *const Manager) usize {
+    //    var c: usize = 0;
+    //    var it = self.firstActiveClient();
+    //    while (it) |cn| : (it = self.nextActiveClient(cn)) c += 1;
+    //    return c;
+    //}
 
     fn applyLayout(m: *Manager) void {
         log.trace("Apply layout", .{});
@@ -450,7 +448,7 @@ pub const Manager = struct {
         var it = m.clients.list.first;
         while (it) |cn| : (it = cn.next)
             if (cn.data.tag != m.activeTag) cn.data.move(Pos.init(100000, 100000));
-        TileLayout.apply(m, Pos.init(0, 0), m.size, m.mainSize / 100.0);
+        TileLayout.apply(m.clients.filterIter(m.activeTag), Pos.init(0, 0), m.size, m.mainSize / 100.0);
         m.layoutDirty = false;
 
         var ev: x11.XEvent = undefined;
