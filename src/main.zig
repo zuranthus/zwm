@@ -4,7 +4,8 @@ const log = @import("./log.zig");
 pub fn main() !void {
     log.info("starting", .{});
 
-    var m = try wm.Manager.init(null);
+    var m = wm.Manager{};
+    try m.init();
     defer m.deinit();
 
     try m.run();
