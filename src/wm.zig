@@ -191,7 +191,7 @@ pub const Manager = struct {
         _ = x11.XGrabButton(
             self.display,
             x11.Button1,
-            config.modKey,
+            config.mod_key,
             w,
             0,
             x11.ButtonPressMask | x11.ButtonReleaseMask | x11.ButtonMotionMask,
@@ -204,7 +204,7 @@ pub const Manager = struct {
         _ = x11.XGrabButton(
             self.display,
             x11.Button3,
-            config.modKey,
+            config.mod_key,
             w,
             0,
             x11.ButtonPressMask | x11.ButtonReleaseMask | x11.ButtonMotionMask,

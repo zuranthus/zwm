@@ -1,6 +1,7 @@
 const std = @import("std");
 const x11 = @import("x11.zig");
 const log = @import("log.zig");
+const config = @import("config.zig");
 const vec = @import("vec.zig");
 const Pos = vec.Pos;
 const Size = vec.Size;
@@ -19,10 +20,6 @@ pub const Client = struct {
     min_size: Size = undefined,
     max_size: Size = undefined,
 
-    const border_width = 3;
-    const border_color_focused = 0xff8000;
-    const border_color_normal = 0x808080;
-
     const Geometry = struct {
         pos: Pos,
         size: Size,
@@ -31,7 +28,7 @@ pub const Client = struct {
     pub fn init(win: x11.Window, d: *x11.Display) Client {
         var c = Client{ .w = win, .d = d };
         c.setFocusedBorder(false);
-        _ = x11.XSetWindowBorderWidth(c.d, c.w, border_width);
+        _ = x11.XSetWindowBorderWidth(c.d, c.w, config.border.width);
         c.updateSizeHints() catch unreachable;
         return c;
     }
@@ -65,7 +62,8 @@ pub const Client = struct {
     }
 
     pub fn setFocusedBorder(c: Client, focused: bool) void {
-        _ = x11.XSetWindowBorder(c.d, c.w, if (focused) border_color_focused else border_color_normal);
+        const border_color: c_ulong = if (focused) config.border.color_focused else config.border.color_normal;
+        _ = x11.XSetWindowBorder(c.d, c.w, border_color);
     }
 
     pub fn move(c: Client, p: Pos) void {
@@ -74,12 +72,14 @@ pub const Client = struct {
     }
 
     pub fn resize(c: Client, sz: Size) void {
+        const border_width = config.border.width;
         const new_size = sz.clamp(c.min_size, c.max_size).sub(Size.init(2 * border_width, 2 * border_width));
         _ = x11.XResizeWindow(c.d, c.w, new_size.w, new_size.h);
         log.trace("resize {} to ({}, {})", .{c.w, new_size.w, new_size.h});
     }
 
     pub fn moveResize(c: Client, pos: Pos, size: Size) void {
+        const border_width = config.border.width;
         const w = @intCast(u32, std.math.clamp(size.x, c.min_size.x, c.max_size.x) - 2 * border_width);
         const h = @intCast(u32, std.math.clamp(size.y, c.min_size.y, c.max_size.y) - 2 * border_width);
         _ = x11.XMoveResizeWindow(c.d, c.w, pos.x, pos.y, w, h);
