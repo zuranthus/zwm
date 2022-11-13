@@ -33,6 +33,44 @@ pub fn prevIndex(slice: anytype, i: usize) usize {
     return if (i == 0) slice.len - 1 else i - 1;
 }
 
+pub fn OwningList(comptime Type: type) type {
+    return struct {
+        const Self = @This();
+        const List = std.SinglyLinkedList(Type);
+        pub const Node = List.Node;
+
+        list: List = List{},
+
+        pub fn init() Self {
+            return .{};
+        }
+
+        pub fn deinit(self: *Self) void {
+            var it = self.list.first;
+            while (it) |node| : (it = node.next) std.heap.c_allocator.destroy(node);
+            self.list = .{};
+        }
+
+        pub fn createNode(self: *Self) *Node {
+            const newNode = std.heap.c_allocator.create(Node) catch unreachable;
+            self.list.prepend(newNode);
+            return newNode;
+        }
+
+        pub fn destroyNode(self: *Self, node: *Node) void {
+            self.list.remove(node);
+            std.heap.c_allocator.destroy(node);
+        }
+
+        pub fn findNodeByData(self: *Self, data: anytype) ?*Node {
+            var it = self.list.first;
+            while (it) |node| : (it = node.next)
+                if (node.data.w == data) return node;
+            return null;
+        }
+    };
+}
+
 // Helper functions
 const assert = std.debug.assert;
 

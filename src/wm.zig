@@ -13,6 +13,7 @@ const Monitor = @import("monitor.zig").Monitor;
 
 pub const Manager = struct {
     const Self = @This();
+    const ClientsOwner = util.OwningList(Client);
     var isInstanceAlive = false;
     // TODO: extract to config
     const modKey = x11.Mod1Mask;
@@ -225,7 +226,7 @@ pub const Manager = struct {
     }
 
     fn deleteClient(self: *Manager, w: x11.Window) void {
-        const node = self.clients.findClientNodeByWindow(w) orelse unreachable;
+        const node = self.clients.findNodeByData(w) orelse unreachable;
         const client = &node.data;
         if (self.focusedClient == client) self.focusedClient = null;
         self.clients.destroyNode(node);
@@ -233,14 +234,14 @@ pub const Manager = struct {
     }
 
     fn findClientByWindow(self: *Manager, w: x11.Window) ?*Client {
-        return if (self.clients.findClientNodeByWindow(w)) |node| &node.data else null;
+        return if (self.clients.findNodeByData(w)) |node| &node.data else null;
     }
 
     fn applyLayout(self: *Manager) void {
         log.trace("Apply layout", .{});
 
         // TODO: figure out a more elegant solution?
-        var it = self.clients.clients.first;
+        var it = self.clients.list.first;
         while (it) |node| : (it = node.next) node.data.move(.{ .x = -10000, .y = -10000 });
 
         self.activeMonitor().applyLayout(TileLayout);
@@ -468,41 +469,5 @@ const EventHandler = struct {
     fn onKeyRelease(m: *Self, ev: x11.XKeyEvent) !void {
         _ = m;
         _ = ev;
-    }
-};
-
-const ClientsOwner = struct {
-    const Self = @This();
-    const Clients = std.SinglyLinkedList(Client);
-    const Node = Clients.Node;
-
-    clients: Clients = Clients{},
-
-    pub fn init() Self {
-        return .{};
-    }
-
-    pub fn deinit(self: *Self) void {
-        var it = self.clients.first;
-        while (it) |node| : (it = node.next) std.heap.c_allocator.destroy(node);
-        self.clients = .{};
-    }
-
-    pub fn createNode(self: *Self) *Node {
-        const newNode = std.heap.c_allocator.create(Node) catch unreachable;
-        self.clients.prepend(newNode);
-        return newNode;
-    }
-
-    pub fn destroyNode(self: *Self, node: *Node) void {
-        self.clients.remove(node);
-        std.heap.c_allocator.destroy(node);
-    }
-
-    fn findClientNodeByWindow(self: *Self, w: x11.Window) ?*Node {
-        var it = self.clients.first;
-        while (it) |node| : (it = node.next)
-            if (node.data.w == w) return node;
-        return null;
     }
 };
