@@ -10,6 +10,7 @@ const hotkeys = @import("hotkeys.zig");
 const util = @import("util.zig");
 const client_import = @import("client.zig");
 const Client = client_import.Client;
+const TileLayout = @import("layout.zig").TileLayout;
 
 const vec = @import("vec.zig");
 const Pos = vec.Pos;
@@ -21,38 +22,7 @@ const DragState = struct {
     frame_size: Size,
 };
 
-const TileLayout = struct {
-    pub fn apply(clients: []*const Client, origin: Pos, size: Size, mainFactor: f32) void {
-        log.trace("Applying layout to {} clients", .{clients.len});
 
-        if (clients.len == 0) return;
-        const gap = 5;
-        var pos = Pos.init(origin.x + gap, origin.y + gap);
-
-        if (clients.len == 1) {
-            const main_size = Size.init(size.x - 2 * gap, size.y - 2 * gap);
-            clients[0].moveResize(pos, main_size);
-            return;
-        }
-
-        const msize = Size.init(
-            @floatToInt(i32, @intToFloat(f32, size.x) * mainFactor) - gap,
-            size.y - 2 * gap,
-        );
-        clients[0].moveResize(pos, msize);
-        pos.x += msize.x + gap;
-        const ssize = Size.init(
-            size.x - msize.x - 2 * gap,
-            @divTrunc(size.y - gap, @intCast(i32, clients.len) - 1) - gap,
-        );
-        for (clients[1..]) |c| {
-            c.moveResize(pos, ssize);
-            pos.y += ssize.y + gap;
-        }
-    }
-};
-
-// TODO: move funcs to util
 
 const workspaceCount: u8 = 10;
 
