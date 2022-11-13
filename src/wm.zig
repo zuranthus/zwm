@@ -13,11 +13,11 @@ const Monitor = @import("monitor.zig").Monitor;
 
 pub const Manager = struct {
     const Self = @This();
-    const ClientsOwner = util.OwningList(Client);
+    const ClientOwner = util.OwningList(Client);
     var is_instance_alive = false;
 
     display: *x11.Display = undefined,
-    clients: ClientsOwner = undefined,
+    clients: ClientOwner = undefined,
     event_handler: EventHandler = undefined,
     monitor: Monitor = undefined,
     focused_client: ?*Client = null,
@@ -44,7 +44,7 @@ pub const Manager = struct {
 
         is_instance_alive = true;
         self.display = display;
-        self.clients = ClientsOwner.init();
+        self.clients = ClientOwner.init();
         self.event_handler = EventHandler.init(display, self);
         const screen = x11.XDefaultScreen(display);
         self.monitor = Monitor.init(
@@ -204,15 +204,23 @@ pub const Manager = struct {
     }
 
     fn deleteClient(self: *Self, w: x11.Window) void {
-        const node = self.clients.findNodeByData(w) orelse unreachable;
+        const node = self.findNodeByWindow(w) orelse unreachable;
         const client = &node.data;
         if (self.focused_client == client) self.focused_client = null;
         self.clients.destroyNode(node);
         log.info("Removed client {}", .{w});
     }
 
+    fn findNodeByWindow(self: *Self, w: x11.Window) ?*ClientOwner.Node {
+        var it = self.clients.list.first;
+        while (it) |node| : (it = node.next)
+            if (node.data.w == w) return node;
+        return null;
+    }
+
     fn findClientByWindow(self: *Self, w: x11.Window) ?*Client {
-        return if (self.clients.findNodeByData(w)) |node| &node.data else null;
+        if (self.findNodeByWindow(w)) |node| return &node.data;
+        return null;
     }
 
     fn applyLayout(self: *Self) void {

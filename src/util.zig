@@ -67,7 +67,7 @@ pub fn OwningList(comptime Type: type) type {
 
             var it = self.list.first;
             while (it) |node| : (it = node.next)
-                if (node.data.w == data) return node;
+                if (node.data == data) return node;
             return null;
         }
     };

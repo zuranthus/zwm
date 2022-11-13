@@ -90,12 +90,12 @@ pub fn movePrev(m: *Manager) void {
     }
 }
 
-//     fn spawn(m: *Manager) void {
-//         const pid = std.os.fork() catch unreachable;
-//         if (pid == 0) {
-//             _ = c_import.close(x11.XConnectionNumber(m.d));
-//             _ = c_import.setsid();
-//             _ = c_import.execvp("alacritty", null);
-//             std.os.exit(0);
-//         }
-//     }
+pub fn spawn(m: *Manager, exec_name: [*c]const u8) void {
+    const pid = std.os.fork() catch unreachable;
+    if (pid == 0) {
+        _ = c_import.close(x11.XConnectionNumber(m.display));
+        _ = c_import.setsid();
+        _ = c_import.execvp(exec_name, null);
+        std.os.exit(0);
+    }
+}
