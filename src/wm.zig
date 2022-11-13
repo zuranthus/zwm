@@ -1,7 +1,7 @@
 const std = @import("std");
 const x11 = @import("x11.zig");
 const log = @import("log.zig");
-const hotkeys = @import("hotkeys.zig");
+const config = @import("config.zig");
 const util = @import("util.zig");
 const vec = @import("vec.zig");
 const Pos = vec.Pos;
@@ -15,8 +15,6 @@ pub const Manager = struct {
     const Self = @This();
     const ClientsOwner = util.OwningList(Client);
     var isInstanceAlive = false;
-    // TODO: extract to config
-    const modKey = x11.Mod1Mask;
 
     display: *x11.Display = undefined,
     clients: ClientsOwner = undefined,
@@ -63,7 +61,7 @@ pub const Manager = struct {
         // hotkeys
         // TODO extract?
         _ = x11.XUngrabKey(m.display, x11.AnyKey, x11.AnyModifier, root);
-        inline for (hotkeys.hotkeys) |hk|
+        inline for (config.hotkeys) |hk|
             _ = x11.XGrabKey(
                 m.display,
                 x11.XKeysymToKeycode(m.display, hk[1]),
@@ -193,7 +191,7 @@ pub const Manager = struct {
         _ = x11.XGrabButton(
             self.display,
             x11.Button1,
-            modKey,
+            config.modKey,
             w,
             0,
             x11.ButtonPressMask | x11.ButtonReleaseMask | x11.ButtonMotionMask,
@@ -206,7 +204,7 @@ pub const Manager = struct {
         _ = x11.XGrabButton(
             self.display,
             x11.Button3,
-            modKey,
+            config.modKey,
             w,
             0,
             x11.ButtonPressMask | x11.ButtonReleaseMask | x11.ButtonMotionMask,
@@ -459,7 +457,7 @@ const EventHandler = struct {
 
     fn onKeyPress(m: *Self, ev: x11.XKeyEvent) !void {
         // TODO extract?
-        inline for (hotkeys.hotkeys) |hk|
+        inline for (config.hotkeys) |hk|
             if (ev.keycode == x11.XKeysymToKeycode(m.display, hk[1]) and ev.state ^ hk[0] == 0)
                 @call(.{}, hk[2], .{m.wm} ++ hk[3]);
     }

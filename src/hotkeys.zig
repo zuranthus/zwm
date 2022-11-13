@@ -1,5 +1,4 @@
 // TODO: investigate adding tests?
-
 const c_import = @cImport({
     @cInclude("unistd.h");
 });
@@ -7,45 +6,13 @@ const std = @import("std");
 const x11 = @import("x11.zig");
 const Manager = @import("wm.zig").Manager;
 
-const mod = x11.Mod1Mask;
-
-pub const hotkeys = .{
-    .{ mod | x11.ShiftMask, x11.XK_C, killFocused, .{} },
-    .{ mod, x11.XK_J, focusNext, .{} },
-    .{ mod, x11.XK_K, focusPrev, .{} },
-    .{ mod, x11.XK_H, decMaster, .{} },
-    .{ mod, x11.XK_L, incMaster, .{} },
-    .{ mod, x11.XK_Return, swapMain, .{} },
-    .{ mod | x11.ShiftMask, x11.XK_J, moveNext, .{} },
-    .{ mod | x11.ShiftMask, x11.XK_K, movePrev, .{} },
-
-    .{ mod, x11.XK_1, selectTag, .{1} },
-    .{ mod, x11.XK_2, selectTag, .{2} },
-    .{ mod, x11.XK_3, selectTag, .{3} },
-    .{ mod, x11.XK_4, selectTag, .{4} },
-    .{ mod, x11.XK_5, selectTag, .{5} },
-    .{ mod, x11.XK_6, selectTag, .{6} },
-    .{ mod, x11.XK_7, selectTag, .{7} },
-    .{ mod, x11.XK_8, selectTag, .{8} },
-    .{ mod, x11.XK_9, selectTag, .{9} },
-    .{ mod | x11.ShiftMask, x11.XK_1, moveToTag, .{1} },
-    .{ mod | x11.ShiftMask, x11.XK_2, moveToTag, .{2} },
-    .{ mod | x11.ShiftMask, x11.XK_3, moveToTag, .{3} },
-    .{ mod | x11.ShiftMask, x11.XK_4, moveToTag, .{4} },
-    .{ mod | x11.ShiftMask, x11.XK_5, moveToTag, .{5} },
-    .{ mod | x11.ShiftMask, x11.XK_6, moveToTag, .{6} },
-    .{ mod | x11.ShiftMask, x11.XK_7, moveToTag, .{7} },
-    .{ mod | x11.ShiftMask, x11.XK_8, moveToTag, .{8} },
-    .{ mod | x11.ShiftMask, x11.XK_9, moveToTag, .{9} },
-};
-
-fn selectTag(m: *Manager, tag: u8) void {
+pub fn selectTag(m: *Manager, tag: u8) void {
     m.activateWorkspace(tag);
     m.updateFocus(false);
     m.markLayoutDirty();
 }
 
-fn moveToTag(m: *Manager, tag: u8) void {
+pub fn moveToTag(m: *Manager, tag: u8) void {
     if (m.activeWorkspace().id == tag) return;
     if (m.focusedClient) |client| {
         m.moveClientToWorkspace(client, client.monitorId.?, tag);
@@ -54,11 +21,11 @@ fn moveToTag(m: *Manager, tag: u8) void {
     }
 }
 
-fn killFocused(m: *Manager) void {
+pub fn killFocused(m: *Manager) void {
     if (m.focusedClient) |client| m.killClientWindow(client);
 }
 
-fn focusNext(m: *Manager) void {
+pub fn focusNext(m: *Manager) void {
     if (m.focusedClient) |client| {
         const w = m.activeWorkspace();
         std.debug.assert(w.activeClient == client);
@@ -67,7 +34,7 @@ fn focusNext(m: *Manager) void {
     }
 }
 
-fn focusPrev(m: *Manager) void {
+pub fn focusPrev(m: *Manager) void {
     if (m.focusedClient) |client| {
         const w = m.activeWorkspace();
         std.debug.assert(w.activeClient == client);
@@ -76,7 +43,7 @@ fn focusPrev(m: *Manager) void {
     }
 }
 
-fn swapMain(m: *Manager) void {
+pub fn swapMain(m: *Manager) void {
     const w = m.activeWorkspace();
     if (w.clients.items.len <= 1) return;
 
@@ -95,17 +62,17 @@ fn swapMain(m: *Manager) void {
     }
 }
 
-fn incMaster(m: *Manager) void {
+pub fn incMaster(m: *Manager) void {
     m.monitor.mainSize = std.math.min(m.monitor.mainSize + 10.0, 80.0);
     m.markLayoutDirty();
 }
 
-fn decMaster(m: *Manager) void {
+pub fn decMaster(m: *Manager) void {
     m.monitor.mainSize = std.math.max(m.monitor.mainSize - 10.0, 20.0);
     m.markLayoutDirty();
 }
 
-fn moveNext(m: *Manager) void {
+pub fn moveNext(m: *Manager) void {
     if (m.focusedClient) |client| {
         const w = m.activeWorkspace();
         std.debug.assert(w.activeClient == client);
@@ -114,7 +81,7 @@ fn moveNext(m: *Manager) void {
     }
 }
 
-fn movePrev(m: *Manager) void {
+pub fn movePrev(m: *Manager) void {
     if (m.focusedClient) |client| {
         const w = m.activeWorkspace();
         std.debug.assert(w.activeClient == client);
