@@ -63,6 +63,8 @@ pub fn OwningList(comptime Type: type) type {
         }
 
         pub fn findNodeByData(self: *Self, data: anytype) ?*Node {
+            std.debug.assert(@TypeOf(data) == Type);
+
             var it = self.list.first;
             while (it) |node| : (it = node.next)
                 if (node.data.w == data) return node;

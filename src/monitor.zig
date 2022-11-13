@@ -18,7 +18,7 @@ pub const Monitor = struct {
         return m;
     }
 
-    pub fn deinit(self: *Monitor) void {
+    pub fn deinit(self: *Self) void {
         for (self.workspaces) |*w| w.deinit();
     }
 
@@ -32,21 +32,21 @@ pub const Monitor = struct {
         return &self.workspaces[self.active_workspace_id];
     }
 
-    pub fn addClient(self: *@This(), client: *Client, workspace_id: ?u8) void {
+    pub fn addClient(self: *Self, client: *Client, workspace_id: ?u8) void {
         std.debug.assert(client.monitor_id == null or client.monitor_id.? != 0);
         client.monitor_id = 0; // TODO: replace with current monitor's id
         const workspace = if (workspace_id) |id| &self.workspaces[id] else self.activeWorkspace();
         workspace.addClient(client);
     }
 
-    pub fn removeClient(self: *@This(), client: *Client) void {
+    pub fn removeClient(self: *Self, client: *Client) void {
         for (self.workspaces) |*w|
             if (w.removeClient(client)) {
                 client.monitor_id = null;
             };
     }
 
-    pub fn applyLayout(self: *@This(), layout: anytype) void {
+    pub fn applyLayout(self: *Self, layout: anytype) void {
         layout.apply(self.activeWorkspace().clients.items, .{ .x = 0, .y = 0 }, self.size, self.mainSize / 100.0);
     }
 };
