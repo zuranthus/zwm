@@ -14,8 +14,8 @@ pub const Client = struct {
     d: *x11.Display,
 
     // TODO: replace with ?struct WorkspaceId { monitor: u8, id: u8}, and remove Monitor struct?
-    monitorId: ?u8 = null,
-    workspaceId: ?u8 = null,
+    monitor_id: ?u8 = null,
+    workspace_id: ?u8 = null,
 
     min_size: Size = undefined,
     max_size: Size = undefined,

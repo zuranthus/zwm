@@ -8,10 +8,10 @@ pub const Workspace = struct {
 
     id: u8,
     clients: Clients,
-    activeClient: ?*Client = null,
+    active_client: ?*Client = null,
 
-    pub fn init(workspaceId: u8) Self {
-        return .{ .id = workspaceId, .clients = Clients.init(std.heap.c_allocator) };
+    pub fn init(workspace_id: u8) Self {
+        return .{ .id = workspace_id, .clients = Clients.init(std.heap.c_allocator) };
     }
 
     pub fn deinit(self: *Self) void {
@@ -19,30 +19,30 @@ pub const Workspace = struct {
     }
 
     pub fn addClient(self: *Self, client: *Client) void {
-        std.debug.assert(client.workspaceId != self.id);
-        client.workspaceId = self.id;
+        std.debug.assert(client.workspace_id != self.id);
+        client.workspace_id = self.id;
         self.clients.insert(0, client) catch @panic("");
-        self.activeClient = client;
+        self.active_client = client;
     }
 
     pub fn activateClient(self: *Self, client: *Client) void {
         if (!util.contains(self.clients.items, client)) @panic("Client is not part of the workspace");
-        self.activeClient = client;
+        self.active_client = client;
     }
 
     pub fn activateNextClient(self: *Self) void {
-        if (self.activeClient) |client| {
+        if (self.active_client) |client| {
             const i = util.findIndex(self.clients.items, client).?;
             const nextIndex = util.nextIndex(self.clients.items, i);
-            self.activeClient = self.clients.items[nextIndex];
+            self.active_client = self.clients.items[nextIndex];
         }
     }
 
     pub fn activatePrevClient(self: *Self) void {
-        if (self.activeClient) |client| {
+        if (self.active_client) |client| {
             const i = util.findIndex(self.clients.items, client).?;
             const prevIndex = util.prevIndex(self.clients.items, i);
-            self.activeClient = self.clients.items[prevIndex];
+            self.active_client = self.clients.items[prevIndex];
         }
     }
 
@@ -70,15 +70,15 @@ pub const Workspace = struct {
         if (util.findIndex(self.clients.items, client)) |i| {
             const c = self.clients.orderedRemove(i);
             std.debug.assert(client == c);
-            client.workspaceId = null;
-            if (client == self.activeClient) {
+            client.workspace_id = null;
+            if (client == self.active_client) {
                 // activate next client if the removed was active
                 // or activate the last client if the removed active client was last
                 const len = self.clients.items.len;
                 if (len == 0) {
-                    self.activeClient = null;
+                    self.active_client = null;
                 } else {
-                    self.activeClient = self.clients.items[if (i == len) len - 1 else i];
+                    self.active_client = self.clients.items[if (i == len) len - 1 else i];
                 }
             }
             return true;

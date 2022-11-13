@@ -4,7 +4,7 @@ const api = @import("hotkeys.zig");
 pub const border = struct {
     pub const width = 3;
     pub const color_normal = 0x808080;
-    pub const color_focused = 0xff8080;
+    pub const color_focused = 0xff8000;
 };
 
 pub const mod_key = x11.Mod1Mask;

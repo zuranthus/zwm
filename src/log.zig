@@ -1,9 +1,9 @@
 const std = @import("std");
 const print = std.debug.print;
 
-const textRed = "\x1b[31m";
-const textGray = "\x1b[90m";
-const textReset = "\x1b[0m";
+const text_red = "\x1b[31m";
+const text_gray = "\x1b[90m";
+const text_reset = "\x1b[0m";
 
 fn logColor(
     comptime cat: []const u8,
@@ -13,11 +13,11 @@ fn logColor(
 ) void {
     print("{s}{s} ", .{ col, cat });
     print(s, args);
-    print("\n{s}", .{textReset});
+    print("\n{s}", .{text_reset});
 }
 
 pub fn trace(comptime s: []const u8, args: anytype) void {
-    logColor("[t]", textGray, s, args);
+    logColor("[t]", text_gray, s, args);
 }
 
 pub fn info(comptime s: []const u8, args: anytype) void {
@@ -25,5 +25,5 @@ pub fn info(comptime s: []const u8, args: anytype) void {
 }
 
 pub fn err(comptime s: []const u8, args: anytype) void {
-    logColor("[e]", textRed, s, args);
+    logColor("[e]", text_red, s, args);
 }

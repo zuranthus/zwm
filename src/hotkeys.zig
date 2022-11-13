@@ -14,30 +14,30 @@ pub fn selectTag(m: *Manager, tag: u8) void {
 
 pub fn moveToTag(m: *Manager, tag: u8) void {
     if (m.activeWorkspace().id == tag) return;
-    if (m.focusedClient) |client| {
-        m.moveClientToWorkspace(client, client.monitorId.?, tag);
+    if (m.focused_client) |client| {
+        m.moveClientToWorkspace(client, client.monitor_id.?, tag);
         m.updateFocus(false);
         m.markLayoutDirty();
     }
 }
 
 pub fn killFocused(m: *Manager) void {
-    if (m.focusedClient) |client| m.killClientWindow(client);
+    if (m.focused_client) |client| m.killClientWindow(client);
 }
 
 pub fn focusNext(m: *Manager) void {
-    if (m.focusedClient) |client| {
+    if (m.focused_client) |client| {
         const w = m.activeWorkspace();
-        std.debug.assert(w.activeClient == client);
+        std.debug.assert(w.active_client == client);
         w.activateNextClient();
         m.updateFocus(false);
     }
 }
 
 pub fn focusPrev(m: *Manager) void {
-    if (m.focusedClient) |client| {
+    if (m.focused_client) |client| {
         const w = m.activeWorkspace();
-        std.debug.assert(w.activeClient == client);
+        std.debug.assert(w.active_client == client);
         w.activatePrevClient();
         m.updateFocus(false);
     }
@@ -47,15 +47,15 @@ pub fn swapMain(m: *Manager) void {
     const w = m.activeWorkspace();
     if (w.clients.items.len <= 1) return;
 
-    if (m.focusedClient) |client| {
-        std.debug.assert(w.activeClient == client);
+    if (m.focused_client) |client| {
+        std.debug.assert(w.active_client == client);
         if (client != w.clients.items[0]) {
             _ = w.swapWithFirst(client);
         } else {
             // focused client is already the first
             // swap it with the next one and activate the new first
-            const newActiveClient = w.swapWithNextClient(client);
-            w.activateClient(newActiveClient);
+            const new_active_client = w.swapWithNextClient(client);
+            w.activateClient(new_active_client);
             m.updateFocus(false);
         }
         m.markLayoutDirty();
@@ -73,18 +73,18 @@ pub fn decMaster(m: *Manager) void {
 }
 
 pub fn moveNext(m: *Manager) void {
-    if (m.focusedClient) |client| {
+    if (m.focused_client) |client| {
         const w = m.activeWorkspace();
-        std.debug.assert(w.activeClient == client);
+        std.debug.assert(w.active_client == client);
         _ = w.swapWithNextClient(client);
         m.markLayoutDirty();
     }
 }
 
 pub fn movePrev(m: *Manager) void {
-    if (m.focusedClient) |client| {
+    if (m.focused_client) |client| {
         const w = m.activeWorkspace();
-        std.debug.assert(w.activeClient == client);
+        std.debug.assert(w.active_client == client);
         _ = w.swapWithPrevClient(client);
         m.markLayoutDirty();
     }

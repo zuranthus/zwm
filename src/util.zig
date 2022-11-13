@@ -1,16 +1,16 @@
 const std = @import("std");
 
-pub fn findIndex(slice: anytype, valueToFind: anytype) ?usize {
-    checkSliceAndValueTypes(@TypeOf(slice), @TypeOf(valueToFind));
+pub fn findIndex(slice: anytype, value_to_find: anytype) ?usize {
+    checkSliceAndValueTypes(@TypeOf(slice), @TypeOf(value_to_find));
 
-    for (slice) |e, i| if (e == valueToFind) return i;
+    for (slice) |e, i| if (e == value_to_find) return i;
     return null;
 }
 
-pub fn contains(slice: anytype, valueToFind: anytype) bool {
-    checkSliceAndValueTypes(@TypeOf(slice), @TypeOf(valueToFind));
+pub fn contains(slice: anytype, value_to_find: anytype) bool {
+    checkSliceAndValueTypes(@TypeOf(slice), @TypeOf(value_to_find));
 
-    return findIndex(slice, valueToFind) != null;
+    return findIndex(slice, value_to_find) != null;
 }
 
 pub fn swap(slice: anytype, i: usize, j: usize) void {
