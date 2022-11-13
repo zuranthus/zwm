@@ -1,160 +1,253 @@
-// TODO - cleanup
-// TODO - move hotkeys funcs to WM/make WM hotkey API class?
-// TODO - extract layout
-// TODO - move classes around
-// TODO - how to focus? how to change tags?
 const std = @import("std");
 const x11 = @import("x11.zig");
 const log = @import("log.zig");
 const hotkeys = @import("hotkeys.zig");
 const util = @import("util.zig");
-const client_import = @import("client.zig");
-const Client = client_import.Client;
-const TileLayout = @import("layout.zig").TileLayout;
-
 const vec = @import("vec.zig");
 const Pos = vec.Pos;
 const Size = vec.Size;
+const Client = @import("client.zig").Client;
+const TileLayout = @import("layout.zig").TileLayout;
+const Workspace = @import("workspace.zig").Workspace;
+const Monitor = @import("monitor.zig").Monitor;
 
-const DragState = struct {
-    start_pos: Pos,
-    frame_pos: Pos,
-    frame_size: Size,
-};
-
-
-
-const workspaceCount: u8 = 10;
-
-pub const Workspace = struct {
+pub const Manager = struct {
     const Self = @This();
-    const Clients = std.ArrayList(*Client);
+    var isInstanceAlive = false;
+    // TODO: extract to config
+    const modKey = x11.Mod1Mask;
 
-    id: u8,
-    clients: Clients,
-    activeClient: ?*Client = null,
+    display: *x11.Display = undefined,
+    clients: ClientsOwner = undefined,
+    eventHandler: EventHandler = undefined,
+    monitor: Monitor = undefined,
+    focusedClient: ?*Client = null,
+    layoutDirty: bool = false,
 
-    pub fn init(workspaceId: u8) Self {
-        return .{ .id = workspaceId, .clients = Clients.init(std.heap.c_allocator) };
+    pub fn init(m: *Manager) !void {
+        if (isInstanceAlive) return error.WmInstanceAlreadyExists;
+        const display = x11.XOpenDisplay(":1") orelse return error.CannotOpenDisplay;
+        const root = x11.XDefaultRootWindow(display);
+        if (isAnotherWmDetected(display, root)) return error.AnotherWmDetected;
+        ErrorHandler.register();
+
+        isInstanceAlive = true;
+        m.display = display;
+        m.clients = ClientsOwner.init();
+        m.eventHandler = EventHandler.init(display, m);
+        const screen = x11.XDefaultScreen(display);
+        m.monitor = Monitor.init(
+            Size.init(
+                x11.XDisplayWidth(display, screen),
+                x11.XDisplayHeight(display, screen),
+            ),
+        );
+        m.manageExistingWindows();
+        // show cursor
+        var wa = std.mem.zeroes(x11.XSetWindowAttributes);
+        wa.cursor = x11.XCreateFontCursor(m.display, x11.XC_left_ptr);
+        _ = x11.XChangeWindowAttributes(m.display, root, x11.CWCursor, &wa);
+        // hotkeys
+        // TODO extract?
+        _ = x11.XUngrabKey(m.display, x11.AnyKey, x11.AnyModifier, root);
+        inline for (hotkeys.hotkeys) |hk|
+            _ = x11.XGrabKey(
+                m.display,
+                x11.XKeysymToKeycode(m.display, hk[1]),
+                hk[0],
+                root,
+                0,
+                x11.GrabModeAsync,
+                x11.GrabModeAsync,
+            );
+
+        log.info("created and initialized wm", .{});
     }
 
-    pub fn deinit(self: *Self) void {
-        self.clients.deinit();
+    pub fn deinit(self: *Manager) void {
+        std.debug.assert(isInstanceAlive);
+        self.monitor.deinit();
+        self.eventHandler.deinit();
+        const root = x11.XDefaultRootWindow(self.display);
+        _ = x11.XUngrabKey(self.display, x11.AnyKey, x11.AnyModifier, root);
+        _ = x11.XCloseDisplay(self.display);
+        ErrorHandler.deregister();
+        isInstanceAlive = false;
+        log.info("destroyed wm", .{});
     }
 
-    pub fn addClient(self: *Self, client: *Client) void {
-        std.debug.assert(client.workspaceId != self.id);
-        client.workspaceId = self.id;
-        self.clients.insert(0, client) catch @panic("");
-        self.activeClient = client;
-    }
-
-    pub fn activateClient(self: *Self, client: *Client) void {
-        if (!util.contains(self.clients.items, client)) @panic("Client is not part of the workspace");
-        self.activeClient = client;
-    }
-
-    pub fn activateNextClient(self: *Self) void {
-        if (self.activeClient) |client| {
-            const i = util.findIndex(self.clients.items, client).?;
-            const nextIndex = util.nextIndex(self.clients.items, i);
-            self.activeClient = self.clients.items[nextIndex];
+    pub fn run(m: *Manager) !void {
+        while (true) {
+            if (m.layoutDirty) m.applyLayout();
+            try m.eventHandler.processEvent();
         }
     }
 
-    pub fn activatePrevClient(self: *Self) void {
-        if (self.activeClient) |client| {
-            const i = util.findIndex(self.clients.items, client).?;
-            const prevIndex = util.prevIndex(self.clients.items, i);
-            self.activeClient = self.clients.items[prevIndex];
+    pub fn activeMonitor(self: *Manager) *Monitor {
+        return &self.monitor;
+    }
+
+    pub fn activeWorkspace(self: *Manager) *Workspace {
+        return self.activeMonitor().activeWorkspace();
+    }
+
+    pub fn activateWorkspace(self: *Manager, workspaceId: u8) void {
+        self.activeMonitor().activateWorkspace(workspaceId);
+    }
+
+    pub fn activeClient(self: *Manager) ?*Client {
+        return self.activeWorkspace().activeClient;
+    }
+
+    pub fn activateClient(self: *Manager, client: *Client) void {
+        self.activeWorkspace().activateClient(client);
+    }
+
+    pub fn moveClientToWorkspace(self: *Manager, client: *Client, monitorId: u8, workspaceId: u8) void {
+        std.debug.assert(monitorId == 0); // TODO: change after implementing multi-monitor support
+        if (client.monitorId == monitorId and client.workspaceId == workspaceId) return;
+        self.monitor.removeClient(client);
+        self.monitor.addClient(client, workspaceId);
+    }
+
+    pub fn updateFocus(self: *Manager, forceUpdate: bool) void {
+        const client = self.activeClient();
+        if (!forceUpdate and self.focusedClient == client) return;
+
+        if (self.focusedClient) |fc| fc.setFocusedBorder(false);
+
+        self.focusedClient = client;
+        if (client) |c| {
+            // update border state and grab focus
+            c.setFocusedBorder(true);
+            _ = x11.XSetInputFocus(self.display, c.w, x11.RevertToPointerRoot, x11.CurrentTime);
+            log.info("Focused client {}", .{c.w});
+        } else {
+            // reset focus
+            _ = x11.XSetInputFocus(self.display, x11.PointerRoot, x11.RevertToPointerRoot, x11.CurrentTime);
+            log.info("Cleared focus", .{});
         }
     }
 
-    pub fn swapWithNextClient(self: *Self, client: *Client) *Client {
-        const i = util.findIndex(self.clients.items, client).?;
-        const nextIndex = util.nextIndex(self.clients.items, i);
-        util.swap(self.clients.items, i, nextIndex);
-        return self.clients.items[i];
+    pub fn markLayoutDirty(m: *Manager) void {
+        m.layoutDirty = true;
     }
 
-    pub fn swapWithPrevClient(self: *Self, client: *Client) *Client {
-        const i = util.findIndex(self.clients.items, client).?;
-        const prevIndex = util.prevIndex(self.clients.items, i);
-        util.swap(self.clients.items, i, prevIndex);
-        return self.clients.items[i];
+    pub fn killClientWindow(self: *Self, client: *Client) void {
+        self.eventHandler.killWindow(client.w) catch unreachable;
     }
 
-    pub fn swapWithFirst(self: *Self, client: *Client) *Client {
-        const i = util.findIndex(self.clients.items, client).?;
-        util.swap(self.clients.items, i, 0);
-        return self.clients.items[i];
-    }
+    fn isAnotherWmDetected(d: *x11.Display, root: x11.Window) bool {
+        const Checker = struct {
+            var anotherWmDetected = false;
 
-    pub fn removeClient(self: *Self, client: *Client) bool {
-        if (util.findIndex(self.clients.items, client)) |i| {
-            const c = self.clients.orderedRemove(i);
-            std.debug.assert(client == c);
-            client.workspaceId = null;
-            if (client == self.activeClient) {
-                // activate next client if the removed was active
-                // or activate the last client if the removed active client was last
-                const len = self.clients.items.len;
-                if (len == 0) {
-                    self.activeClient = null;
-                } else {
-                    self.activeClient = self.clients.items[if (i == len) len - 1 else i];
-                }
+            fn onWmDetected(_: ?*x11.Display, err: [*c]x11.XErrorEvent) callconv(.C) c_int {
+                const e: *x11.XErrorEvent = err;
+                std.debug.assert(e.error_code == x11.BadAccess);
+                anotherWmDetected = true;
+                return 0;
             }
-            return true;
-        }
-        return false;
-    }
-};
-
-pub const Monitor = struct {
-    const Self = @This();
-
-    size: Size,
-    mainSize: f32 = 50.0,
-    workspaces: [workspaceCount]Workspace = undefined,
-    activeWorkspaceIndex: u8 = 1,
-
-    pub fn init(monitorSize: Size) Self {
-        var m = Self{ .size = monitorSize };
-        for (m.workspaces) |*w, i| w.* = Workspace.init(@intCast(u8, i));
-        return m;
+        };
+        const defaultHandler = x11.XSetErrorHandler(Checker.onWmDetected);
+        _ = x11.XSelectInput(d, root, x11.SubstructureRedirectMask | x11.SubstructureNotifyMask);
+        _ = x11.XSync(d, 0);
+        _ = x11.XSetErrorHandler(defaultHandler);
+        return Checker.anotherWmDetected;
     }
 
-    pub fn deinit(self: *Monitor) void {
-        for (self.workspaces) |*w| w.deinit();
+    fn manageExistingWindows(m: *Manager) void {
+        const root = x11.XDefaultRootWindow(m.display);
+        var rootRet: x11.Window = undefined;
+        var parent: x11.Window = undefined;
+        var ws: [*c]x11.Window = null;
+        var nws: c_uint = 0;
+        _ = x11.XQueryTree(m.display, root, &rootRet, &parent, &ws, &nws);
+        defer _ = if (ws != null) x11.XFree(ws);
+        if (nws > 0) for (ws[0..nws]) |w| {
+            var wa = std.mem.zeroes(x11.XWindowAttributes);
+            if (x11.XGetWindowAttributes(m.display, w, &wa) == 0) {
+                log.err("XGetWindowAttributes failed for {}", .{w});
+                continue;
+            }
+            // Only add windows that are visible and don't set override_redirect
+            if (wa.override_redirect == 0 and wa.map_state == x11.IsViewable) {
+                const c = m.createClient(w);
+                m.activeMonitor().addClient(c, null);
+            } else {
+                log.info("Ignoring {}", .{w});
+            }
+        };
+        m.updateFocus(true);
+        m.markLayoutDirty();
     }
 
-    pub fn activateWorkspace(self: *Self, workspaceIndex: u8) void {
-        // TODO: allow 0?
-        std.debug.assert(1 <= workspaceIndex and workspaceIndex <= workspaceCount);
-        self.activeWorkspaceIndex = workspaceIndex;
+    fn createClient(self: *Self, w: x11.Window) *Client {
+        std.debug.assert(self.findClientByWindow(w) == null);
+        var wa = std.mem.zeroes(x11.XWindowAttributes);
+        if (x11.XGetWindowAttributes(self.display, w, &wa) == 0) unreachable;
+        _ = x11.XSelectInput(
+            self.display,
+            w,
+            x11.EnterWindowMask | x11.SubstructureRedirectMask | x11.SubstructureNotifyMask,
+        );
+        // move with mod + LB
+        _ = x11.XGrabButton(
+            self.display,
+            x11.Button1,
+            modKey,
+            w,
+            0,
+            x11.ButtonPressMask | x11.ButtonReleaseMask | x11.ButtonMotionMask,
+            x11.GrabModeAsync,
+            x11.GrabModeAsync,
+            x11.None,
+            x11.None,
+        );
+        // resize with mod + RB
+        _ = x11.XGrabButton(
+            self.display,
+            x11.Button3,
+            modKey,
+            w,
+            0,
+            x11.ButtonPressMask | x11.ButtonReleaseMask | x11.ButtonMotionMask,
+            x11.GrabModeAsync,
+            x11.GrabModeAsync,
+            x11.None,
+            x11.None,
+        );
+        const newNode = self.clients.createNode();
+        newNode.data = Client.init(w, self.display);
+        const c = &newNode.data;
+        log.info("Added client {}", .{w});
+        log.trace("min_size ({}, {}), max_size ({}, {})", .{ c.min_size.x, c.min_size.y, c.max_size.x, c.max_size.y });
+        return c;
     }
 
-    pub fn activeWorkspace(self: *Self) *Workspace {
-        return &self.workspaces[self.activeWorkspaceIndex];
+    fn deleteClient(self: *Manager, w: x11.Window) void {
+        const node = self.clients.findClientNodeByWindow(w) orelse unreachable;
+        const client = &node.data;
+        if (self.focusedClient == client) self.focusedClient = null;
+        self.clients.destroyNode(node);
+        log.info("Removed client {}", .{w});
     }
 
-    pub fn addClient(self: *@This(), client: *Client, workspaceId: ?u8) void {
-        std.debug.assert(client.monitorId == null or client.monitorId.? != 0);
-        client.monitorId = 0; // TODO: replace with current monitor's id
-        const workspace = if (workspaceId) |id| &self.workspaces[id] else self.activeWorkspace();
-        workspace.addClient(client);
+    fn findClientByWindow(self: *Manager, w: x11.Window) ?*Client {
+        return if (self.clients.findClientNodeByWindow(w)) |node| &node.data else null;
     }
 
-    pub fn removeClient(self: *@This(), client: *Client) void {
-        for (self.workspaces) |*w|
-            if (w.removeClient(client)) {
-                client.monitorId = null;
-            };
-    }
+    fn applyLayout(self: *Manager) void {
+        log.trace("Apply layout", .{});
 
-    pub fn applyLayout(self: *@This(), layout: anytype) void {
-        layout.apply(self.activeWorkspace().clients.items, Pos.init(0, 0), self.size, self.mainSize / 100.0);
+        // TODO: figure out a more elegant solution?
+        var it = self.clients.clients.first;
+        while (it) |node| : (it = node.next) node.data.move(.{ .x = -10000, .y = -10000 });
+
+        self.activeMonitor().applyLayout(TileLayout);
+        self.layoutDirty = false;
+
+        // Skip EnterNotify events to avoid changing the focused window without delibarate mouse movement
+        self.eventHandler.skipEnterWindowEvents();
     }
 };
 
@@ -184,6 +277,11 @@ const ErrorHandler = struct {
 
 const EventHandler = struct {
     const Self = @This();
+    const DragState = struct {
+        start_pos: Pos,
+        frame_pos: Pos,
+        frame_size: Size,
+    };
 
     display: *x11.Display,
     wm: *Manager,
@@ -373,7 +471,7 @@ const EventHandler = struct {
     }
 };
 
-pub const ClientsOwner = struct {
+const ClientsOwner = struct {
     const Self = @This();
     const Clients = std.SinglyLinkedList(Client);
     const Node = Clients.Node;
@@ -406,255 +504,5 @@ pub const ClientsOwner = struct {
         while (it) |node| : (it = node.next)
             if (node.data.w == w) return node;
         return null;
-    }
-};
-
-pub const Manager = struct {
-    const Self = @This();
-    var isInstanceAlive = false;
-    const modKey = x11.Mod1Mask;
-
-    display: *x11.Display = undefined,
-    clients: ClientsOwner = undefined,
-    eventHandler: EventHandler = undefined,
-    monitor: Monitor = undefined,
-    focusedClient: ?*Client = null,
-    layoutDirty: bool = false,
-
-    fn isAnotherWmDetected(d: *x11.Display, root: x11.Window) bool {
-        const Checker = struct {
-            var anotherWmDetected = false;
-
-            fn onWmDetected(_: ?*x11.Display, err: [*c]x11.XErrorEvent) callconv(.C) c_int {
-                const e: *x11.XErrorEvent = err;
-                std.debug.assert(e.error_code == x11.BadAccess);
-                anotherWmDetected = true;
-                return 0;
-            }
-        };
-        const defaultHandler = x11.XSetErrorHandler(Checker.onWmDetected);
-        _ = x11.XSelectInput(d, root, x11.SubstructureRedirectMask | x11.SubstructureNotifyMask);
-        _ = x11.XSync(d, 0);
-        _ = x11.XSetErrorHandler(defaultHandler);
-        return Checker.anotherWmDetected;
-    }
-
-    pub fn init(m: *Manager) !void {
-        if (isInstanceAlive) return error.WmInstanceAlreadyExists;
-        const display = x11.XOpenDisplay(":1") orelse return error.CannotOpenDisplay;
-        const root = x11.XDefaultRootWindow(display);
-        if (isAnotherWmDetected(display, root)) return error.AnotherWmDetected;
-        ErrorHandler.register();
-
-        isInstanceAlive = true;
-        m.display = display;
-        m.clients = ClientsOwner.init();
-        m.eventHandler = EventHandler.init(display, m);
-        const screen = x11.XDefaultScreen(display);
-        m.monitor = Monitor.init(
-            Size.init(
-                x11.XDisplayWidth(display, screen),
-                x11.XDisplayHeight(display, screen),
-            ),
-        );
-    }
-
-    pub fn deinit(self: *Manager) void {
-        std.debug.assert(isInstanceAlive);
-        self.monitor.deinit();
-        self.eventHandler.deinit();
-        const root = x11.XDefaultRootWindow(self.display);
-        _ = x11.XUngrabKey(self.display, x11.AnyKey, x11.AnyModifier, root);
-        _ = x11.XCloseDisplay(self.display);
-        ErrorHandler.deregister();
-        isInstanceAlive = false;
-        log.info("destroyed wm", .{});
-    }
-
-    pub fn run(m: *Manager) !void {
-        m.initWm();
-        try m.startEventLoop();
-    }
-
-    fn initWm(m: *Manager) void {
-        // manage existing visbile windows
-        m.manageExistingWindows();
-
-        const root = x11.XDefaultRootWindow(m.display);
-        // show cursor
-        var wa = std.mem.zeroes(x11.XSetWindowAttributes);
-        wa.cursor = x11.XCreateFontCursor(m.display, x11.XC_left_ptr);
-        _ = x11.XChangeWindowAttributes(m.display, root, x11.CWCursor, &wa);
-        // hotkeys
-        // TODO extract?
-        _ = x11.XUngrabKey(m.display, x11.AnyKey, x11.AnyModifier, root);
-        inline for (hotkeys.hotkeys) |hk|
-            _ = x11.XGrabKey(
-                m.display,
-                x11.XKeysymToKeycode(m.display, hk[1]),
-                hk[0],
-                root,
-                0,
-                x11.GrabModeAsync,
-                x11.GrabModeAsync,
-            );
-
-        log.info("initialized wm", .{});
-    }
-
-    fn manageExistingWindows(m: *Manager) void {
-        const root = x11.XDefaultRootWindow(m.display);
-        var rootRet: x11.Window = undefined;
-        var parent: x11.Window = undefined;
-        var ws: [*c]x11.Window = null;
-        var nws: c_uint = 0;
-        _ = x11.XQueryTree(m.display, root, &rootRet, &parent, &ws, &nws);
-        defer _ = if (ws != null) x11.XFree(ws);
-        if (nws > 0) for (ws[0..nws]) |w| {
-            var wa = std.mem.zeroes(x11.XWindowAttributes);
-            if (x11.XGetWindowAttributes(m.display, w, &wa) == 0) {
-                log.err("XGetWindowAttributes failed for {}", .{w});
-                continue;
-            }
-            // Only add windows that are visible and don't set override_redirect
-            if (wa.override_redirect == 0 and wa.map_state == x11.IsViewable) {
-                const c = m.createClient(w);
-                m.activeMonitor().addClient(c, null);
-            } else {
-                log.info("Ignoring {}", .{w});
-            }
-        };
-        m.updateFocus(true);
-        m.markLayoutDirty();
-    }
-
-    fn startEventLoop(m: *Manager) !void {
-        while (true) {
-            if (m.layoutDirty) m.applyLayout();
-            try m.eventHandler.processEvent();
-        }
-    }
-
-    fn createClient(self: *Self, w: x11.Window) *Client {
-        std.debug.assert(self.findClientByWindow(w) == null);
-        var wa = std.mem.zeroes(x11.XWindowAttributes);
-        if (x11.XGetWindowAttributes(self.display, w, &wa) == 0) unreachable;
-        _ = x11.XSelectInput(
-            self.display,
-            w,
-            x11.EnterWindowMask | x11.SubstructureRedirectMask | x11.SubstructureNotifyMask,
-        );
-        // move with mod + LB
-        _ = x11.XGrabButton(
-            self.display,
-            x11.Button1,
-            modKey,
-            w,
-            0,
-            x11.ButtonPressMask | x11.ButtonReleaseMask | x11.ButtonMotionMask,
-            x11.GrabModeAsync,
-            x11.GrabModeAsync,
-            x11.None,
-            x11.None,
-        );
-        // resize with mod + RB
-        _ = x11.XGrabButton(
-            self.display,
-            x11.Button3,
-            modKey,
-            w,
-            0,
-            x11.ButtonPressMask | x11.ButtonReleaseMask | x11.ButtonMotionMask,
-            x11.GrabModeAsync,
-            x11.GrabModeAsync,
-            x11.None,
-            x11.None,
-        );
-        const newNode = self.clients.createNode();
-        newNode.data = Client.init(w, self.display);
-        const c = &newNode.data;
-        log.info("Added client {}", .{w});
-        log.trace("min_size ({}, {}), max_size ({}, {})", .{ c.min_size.x, c.min_size.y, c.max_size.x, c.max_size.y });
-        return c;
-    }
-
-    fn findClientByWindow(self: *Manager, w: x11.Window) ?*Client {
-        return if (self.clients.findClientNodeByWindow(w)) |node| &node.data else null;
-    }
-
-    fn deleteClient(self: *Manager, w: x11.Window) void {
-        const node = self.clients.findClientNodeByWindow(w) orelse unreachable;
-        const client = &node.data;
-        if (self.focusedClient == client) self.focusedClient = null;
-        self.clients.destroyNode(node);
-        log.info("Removed client {}", .{w});
-    }
-
-    pub fn activeMonitor(self: *Manager) *Monitor {
-        return &self.monitor;
-    }
-
-    pub fn activeWorkspace(self: *Manager) *Workspace {
-        return self.activeMonitor().activeWorkspace();
-    }
-
-    pub fn activateWorkspace(self: *Manager, workspaceId: u8) void {
-        self.activeMonitor().activateWorkspace(workspaceId);
-    }
-
-    fn activeClient(self: *Manager) ?*Client {
-        return self.activeWorkspace().activeClient;
-    }
-
-    pub fn activateClient(self: *Manager, client: *Client) void {
-        self.activeWorkspace().activateClient(client);
-    }
-
-    pub fn moveClientToWorkspace(self: *Manager, client: *Client, monitorId: u8, workspaceId: u8) void {
-        std.debug.assert(monitorId == 0); // TODO: change after implementing multi-monitor support
-        if (client.monitorId == monitorId and client.workspaceId == workspaceId) return;
-        self.monitor.removeClient(client);
-        self.monitor.addClient(client, workspaceId);
-    }
-
-    pub fn updateFocus(self: *Manager, forceUpdate: bool) void {
-        const client = self.activeClient();
-        if (!forceUpdate and self.focusedClient == client) return;
-
-        if (self.focusedClient) |fc| fc.setFocusedBorder(false);
-
-        self.focusedClient = client;
-        if (client) |c| {
-            // update border state and grab focus
-            c.setFocusedBorder(true);
-            _ = x11.XSetInputFocus(self.display, c.w, x11.RevertToPointerRoot, x11.CurrentTime);
-            log.info("Focused client {}", .{c.w});
-        } else {
-            // reset focus
-            _ = x11.XSetInputFocus(self.display, x11.PointerRoot, x11.RevertToPointerRoot, x11.CurrentTime);
-            log.info("Cleared focus", .{});
-        }
-    }
-
-    pub fn markLayoutDirty(m: *Manager) void {
-        m.layoutDirty = true;
-    }
-
-    pub fn killClientWindow(self: *Self, client: *Client) void {
-        self.eventHandler.killWindow(client.w) catch unreachable;
-    }
-
-    fn applyLayout(self: *Manager) void {
-        log.trace("Apply layout", .{});
-
-        // TODO: figure out a more elegant solution?
-        var it = self.clients.clients.first;
-        while (it) |node| : (it = node.next) node.data.move(.{ .x = -10000, .y = -10000 });
-
-        self.activeMonitor().applyLayout(TileLayout);
-        self.layoutDirty = false;
-
-        // Skip EnterNotify events to avoid changing the focused window without delibarate mouse movement
-        self.eventHandler.skipEnterWindowEvents();
     }
 };

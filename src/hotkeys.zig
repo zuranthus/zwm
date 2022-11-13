@@ -5,8 +5,7 @@ const c_import = @cImport({
 });
 const std = @import("std");
 const x11 = @import("x11.zig");
-const wm = @import("wm.zig");
-const Manager = wm.Manager;
+const Manager = @import("wm.zig").Manager;
 
 const mod = x11.Mod1Mask;
 
@@ -123,6 +122,7 @@ fn movePrev(m: *Manager) void {
         m.markLayoutDirty();
     }
 }
+
 //     fn spawn(m: *Manager) void {
 //         const pid = std.os.fork() catch unreachable;
 //         if (pid == 0) {

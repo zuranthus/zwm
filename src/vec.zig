@@ -1,3 +1,4 @@
+// TODO: get rid fo these
 pub const IntVec2 = struct {
     x: i32,
     y: i32,

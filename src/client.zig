@@ -1,7 +1,7 @@
 const std = @import("std");
 const x11 = @import("x11.zig");
-const vec = @import("vec.zig");
 const log = @import("log.zig");
+const vec = @import("vec.zig");
 const Pos = vec.Pos;
 const Size = vec.Size;
 
