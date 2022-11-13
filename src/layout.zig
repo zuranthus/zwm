@@ -5,7 +5,7 @@ const Size = vec.Size;
 const Client = @import("client.zig").Client;
 
 pub const TileLayout = struct {
-    pub fn apply(clients: []*const Client, origin: Pos, size: Size, main_factor: f32) void {
+    pub fn apply(clients: []const *Client, origin: Pos, size: Size, main_factor: f32) void {
         log.trace("Applying layout to {} clients", .{clients.len});
 
         if (clients.len == 0) return;
