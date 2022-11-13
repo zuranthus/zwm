@@ -1,14 +1,13 @@
-const wm = @import("wm.zig");
-const log = @import("./log.zig");
+const Manager = @import("wm.zig").Manager;
+const log = @import("log.zig");
 
 pub fn main() !void {
     log.info("starting", .{});
 
-    var m = wm.Manager{};
-    try m.init();
-    defer m.deinit();
+    var wm = Manager{};
+    defer wm.deinit();
 
-    try m.run();
+    try wm.run();
 
     log.info("exiting", .{});
 }

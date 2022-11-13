@@ -25,7 +25,19 @@ pub const Manager = struct {
     focusedClient: ?*Client = null,
     layoutDirty: bool = false,
 
-    pub fn init(m: *Manager) !void {
+    pub fn deinit(self: *Manager) void {
+        std.debug.assert(isInstanceAlive);
+        self.monitor.deinit();
+        self.eventHandler.deinit();
+        const root = x11.XDefaultRootWindow(self.display);
+        _ = x11.XUngrabKey(self.display, x11.AnyKey, x11.AnyModifier, root);
+        _ = x11.XCloseDisplay(self.display);
+        ErrorHandler.deregister();
+        isInstanceAlive = false;
+        log.info("destroyed wm", .{});
+    }
+
+    pub fn run(m: *Manager) !void {
         if (isInstanceAlive) return error.WmInstanceAlreadyExists;
         const display = x11.XOpenDisplay(":1") orelse return error.CannotOpenDisplay;
         const root = x11.XDefaultRootWindow(display);
@@ -63,21 +75,7 @@ pub const Manager = struct {
             );
 
         log.info("created and initialized wm", .{});
-    }
 
-    pub fn deinit(self: *Manager) void {
-        std.debug.assert(isInstanceAlive);
-        self.monitor.deinit();
-        self.eventHandler.deinit();
-        const root = x11.XDefaultRootWindow(self.display);
-        _ = x11.XUngrabKey(self.display, x11.AnyKey, x11.AnyModifier, root);
-        _ = x11.XCloseDisplay(self.display);
-        ErrorHandler.deregister();
-        isInstanceAlive = false;
-        log.info("destroyed wm", .{});
-    }
-
-    pub fn run(m: *Manager) !void {
         while (true) {
             if (m.layoutDirty) m.applyLayout();
             try m.eventHandler.processEvent();
