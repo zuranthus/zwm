@@ -1,4 +1,5 @@
 const log = @import("log.zig");
+const config = @import("config.zig");
 const vec = @import("vec.zig");
 const Pos = vec.Pos;
 const Size = vec.Size;
@@ -9,7 +10,7 @@ pub const TileLayout = struct {
         log.trace("Applying layout to {} clients", .{clients.len});
 
         if (clients.len == 0) return;
-        const gap = 5;
+        const gap = config.border.gap;
         var pos = Pos.init(origin.x + gap, origin.y + gap);
 
         if (clients.len == 1) {
