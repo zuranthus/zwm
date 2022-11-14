@@ -20,13 +20,13 @@ pub const TileLayout = struct {
         }
 
         const msize = Size.init(
-            @floatToInt(i32, @intToFloat(f32, size.x) * main_factor) - gap,
+            @floatToInt(i32, @intToFloat(f32, size.x) * main_factor - @intToFloat(f32, gap) * 1.5),
             size.y - 2 * gap,
         );
         clients[0].moveResize(pos, msize);
         pos.x += msize.x + gap;
         const ssize = Size.init(
-            size.x - msize.x - 2 * gap,
+            size.x - msize.x - 3 * gap,
             @divTrunc(size.y - gap, @intCast(i32, clients.len) - 1) - gap,
         );
         for (clients[1..]) |c| {

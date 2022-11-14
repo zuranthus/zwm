@@ -226,11 +226,17 @@ pub const Manager = struct {
     fn applyLayout(self: *Self) void {
         log.trace("Apply layout", .{});
 
-        // TODO: figure out a more elegant solution?
-        var it = self.clients.list.first;
-        while (it) |node| : (it = node.next) node.data.move(.{ .x = -10000, .y = -10000 });
-
         self.activeMonitor().applyLayout(TileLayout);
+        // TODO: figure out a more elegant solution?
+        const mon_id = self.activeMonitor().id;
+        const w_id = self.activeWorkspace().id;
+        var it = self.clients.list.first;
+        while (it) |node| : (it = node.next) {
+            const c = node.data;
+            if (c.monitor_id != mon_id or c.workspace_id != w_id) {
+                node.data.move(.{ .x = -10000, .y = -10000 });
+            }
+        }
         self.layout_dirty = false;
 
         // Skip EnterNotify events to avoid changing the focused window without delibarate mouse movement
