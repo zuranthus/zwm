@@ -3,6 +3,7 @@ const x11 = @import("x11.zig");
 const log = @import("log.zig");
 const config = @import("config.zig");
 const util = @import("util.zig");
+const clients_state = @import("clients_state.zig");
 const vec = @import("vec.zig");
 const Pos = vec.Pos;
 const Size = vec.Size;
@@ -23,9 +24,17 @@ pub const Manager = struct {
     focused_client: ?*Client = null,
     layout_dirty: bool = false,
     exit_code: ?u8 = null,
+    state_file: ?[]const u8 = null,
 
     pub fn deinit(self: *Self) void {
         if (!is_instance_alive) return;
+
+        if (self.state_file) |file| {
+            log.info("Saving state to {s}", .{file});
+            clients_state.saveState(self, file) catch |e| {
+                log.err("Cannot save clients state, error {}", .{e});
+            };
+        }
 
         self.monitor.deinit();
         self.event_handler.deinit();
@@ -37,9 +46,10 @@ pub const Manager = struct {
         log.info("destroyed wm", .{});
     }
 
-    pub fn run(self: *Self) !u8 {
+    pub fn run(self: *Self, display_name_arg: ?[:0]const u8, state_file_arg: ?[]const u8) !u8 {
         if (is_instance_alive) return error.WmInstanceAlreadyExists;
-        const display = x11.XOpenDisplay(":0") orelse return error.CannotOpenDisplay;
+        const display_name: [:0]const u8 = if (display_name_arg) |name| name else ":0";
+        const display = x11.XOpenDisplay(@ptrCast([*c]const u8, display_name)) orelse return error.CannotOpenDisplay;
         const root = x11.XDefaultRootWindow(display);
         if (isAnotherWmDetected(display, root)) return error.AnotherWmDetected;
         ErrorHandler.register();
@@ -74,6 +84,13 @@ pub const Manager = struct {
                 x11.GrabModeAsync,
             );
 
+        self.state_file = state_file_arg;
+        if (self.state_file) |file| {
+            log.info("Loading state from {s}", .{file});
+            clients_state.loadState(self, file) catch |e| {
+                log.err("Cannot load clients state, error {}", .{e});
+            };
+        }
         log.info("created and initialized wm", .{});
 
         while (self.exit_code == null) {
