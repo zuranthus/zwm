@@ -10,6 +10,7 @@ pub const Monitor = struct {
     size: Size,
     mainSize: f32 = 50.0,
     workspaces: [workspace_count]Workspace = undefined,
+    id: u8 = 0, // TODO: update when multi-monitor
     active_workspace_id: u8 = 1,
 
     pub fn init(monitorSize: Size) Self {

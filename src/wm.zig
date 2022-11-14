@@ -337,11 +337,19 @@ const EventHandler = struct {
 
     fn onUnmapNotify(self: *Self, ev: x11.XUnmapEvent) !void {
         log.trace("UnmapNotify for {}", .{ev.window});
-        const client = self.wm.findClientByWindow(ev.window) orelse @panic("Window is not a client");
-        self.wm.activeMonitor().removeClient(client);
-        self.wm.deleteClient(ev.window);
-        self.wm.updateFocus(true);
-        self.wm.markLayoutDirty();
+        const wm = self.wm;
+        if (wm.findClientByWindow(ev.window)) |client| {
+            // TODO: revisit with multi-monitor support; need to update layout for any active monitors
+            const m = wm.activeMonitor();
+            const need_update_layout = client.monitor_id == m.id and client.workspace_id == m.active_workspace_id;
+            if (need_update_layout) wm.markLayoutDirty();
+
+            wm.activeMonitor().removeClient(client);
+            wm.deleteClient(ev.window);
+            wm.updateFocus(true);
+        } else {
+            log.trace("skipping non-client window", .{});
+        }
     }
 
     fn onConfigureRequest(self: *Self, ev: x11.XConfigureRequestEvent) !void {
