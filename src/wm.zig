@@ -24,7 +24,8 @@ pub const Manager = struct {
     layout_dirty: bool = false,
 
     pub fn deinit(self: *Self) void {
-        std.debug.assert(is_instance_alive);
+        if (!is_instance_alive) return;
+
         self.monitor.deinit();
         self.event_handler.deinit();
         const root = x11.XDefaultRootWindow(self.display);
@@ -37,7 +38,7 @@ pub const Manager = struct {
 
     pub fn run(self: *Self) !void {
         if (is_instance_alive) return error.WmInstanceAlreadyExists;
-        const display = x11.XOpenDisplay(":1") orelse return error.CannotOpenDisplay;
+        const display = x11.XOpenDisplay(":0") orelse return error.CannotOpenDisplay;
         const root = x11.XDefaultRootWindow(display);
         if (isAnotherWmDetected(display, root)) return error.AnotherWmDetected;
         ErrorHandler.register();
