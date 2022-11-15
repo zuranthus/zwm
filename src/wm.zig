@@ -43,7 +43,7 @@ pub const Manager = struct {
         _ = x11.XCloseDisplay(self.display);
         ErrorHandler.deregister();
         is_instance_alive = false;
-        log.info("destroyed wm", .{});
+        log.info("Destroyed wm", .{});
     }
 
     pub fn run(self: *Self, display_name_arg: ?[:0]const u8, state_file_arg: ?[]const u8) !u8 {
@@ -91,7 +91,7 @@ pub const Manager = struct {
                 log.err("Cannot load clients state, error {}", .{e});
             };
         }
-        log.info("created and initialized wm", .{});
+        log.info("Created and initialized wm", .{});
 
         while (self.exit_code == null) {
             if (self.layout_dirty) self.applyLayout();

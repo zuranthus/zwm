@@ -3,7 +3,7 @@ const log = @import("log.zig");
 const Manager = @import("wm.zig").Manager;
 
 pub fn main() !u8 {
-    log.info("starting", .{});
+    log.info("Starting zwm", .{});
 
     // quick-n-dirty args parse
     var stateFile: ?[]const u8 = null;
@@ -24,6 +24,6 @@ pub fn main() !u8 {
 
     const exit_code = try wm.run(display, stateFile);
 
-    log.info("exiting with {}", .{exit_code});
+    log.info("Exiting with {}", .{exit_code});
     return exit_code;
 }
