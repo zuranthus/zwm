@@ -99,3 +99,7 @@ pub fn spawn(m: *Manager, exec_name: [*c]const u8) void {
         std.os.exit(0);
     }
 }
+
+pub fn quit(m: *Manager, code: u8) void {
+    m.exit_code = code;
+}

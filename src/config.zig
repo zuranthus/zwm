@@ -19,9 +19,9 @@ pub const hotkeys = .{
     .{ mod_key | x11.ShiftMask, x11.XK_K, api.movePrev, .{} },
     .{ mod_key, x11.XK_Return, api.swapMain, .{} },
 
-    .{ mod_key | x11.ShiftMask, x11.XK_Return, api.spawn, .{"alacritty"} },
-
     .{ mod_key | x11.ShiftMask, x11.XK_C, api.killFocused, .{} },
+    .{ mod_key | x11.ShiftMask, x11.XK_Return, api.spawn, .{"alacritty"} },
+    .{ mod_key | x11.ShiftMask, x11.XK_Q, api.quit, .{42} },
 
     .{ mod_key, x11.XK_1, api.selectTag, .{1} },
     .{ mod_key, x11.XK_2, api.selectTag, .{2} },

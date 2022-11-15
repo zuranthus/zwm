@@ -22,6 +22,7 @@ pub const Manager = struct {
     monitor: Monitor = undefined,
     focused_client: ?*Client = null,
     layout_dirty: bool = false,
+    exit_code: ?u8 = null,
 
     pub fn deinit(self: *Self) void {
         if (!is_instance_alive) return;
@@ -36,7 +37,7 @@ pub const Manager = struct {
         log.info("destroyed wm", .{});
     }
 
-    pub fn run(self: *Self) !void {
+    pub fn run(self: *Self) !u8 {
         if (is_instance_alive) return error.WmInstanceAlreadyExists;
         const display = x11.XOpenDisplay(":0") orelse return error.CannotOpenDisplay;
         const root = x11.XDefaultRootWindow(display);
@@ -75,10 +76,13 @@ pub const Manager = struct {
 
         log.info("created and initialized wm", .{});
 
-        while (true) {
+        while (self.exit_code == null) {
             if (self.layout_dirty) self.applyLayout();
             try self.event_handler.processEvent();
         }
+
+        if (self.exit_code) |code| return code;
+        return 0;
     }
 
     pub fn activeMonitor(self: *Self) *Monitor {
@@ -151,7 +155,7 @@ pub const Manager = struct {
             }
             // Only add windows that are visible and don't set override_redirect
             if (wa.override_redirect == 0 and wa.map_state == x11.IsViewable) {
-                const c = self.createClient(w);
+                const c = self.createClient(w) catch unreachable;
                 self.activeMonitor().addClient(c, null);
             } else {
                 log.info("Ignoring {}", .{w});
@@ -161,8 +165,9 @@ pub const Manager = struct {
         self.markLayoutDirty();
     }
 
-    fn createClient(self: *Self, w: x11.Window) *Client {
-        std.debug.assert(self.findClientByWindow(w) == null);
+    fn createClient(self: *Self, w: x11.Window) !*Client {
+        if (self.findClientByWindow(w) != null) return error.WindowAlreadyManaged;
+
         var wa = std.mem.zeroes(x11.XWindowAttributes);
         if (x11.XGetWindowAttributes(self.display, w, &wa) == 0) unreachable;
         _ = x11.XSelectInput(
@@ -379,7 +384,10 @@ const EventHandler = struct {
         const w = ev.window;
         log.trace("MapRequest for {}", .{w});
         _ = x11.XMapWindow(self.display, w);
-        const c = self.wm.createClient(w);
+        const c = self.wm.createClient(w) catch |e| {
+            log.err("error {}", .{e});
+            return;
+        };
         self.wm.activeMonitor().addClient(c, null);
         self.wm.updateFocus(false);
         self.wm.markLayoutDirty();
