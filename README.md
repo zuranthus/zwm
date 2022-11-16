@@ -19,7 +19,7 @@ that is easier to hack than dwm. Both goals are work in progress :)
 - [x] Focus and window management commands
 - [x] Spawn process command
 - [x] Customizable config file
-- [x] Hot reloading with persisted windows state (requires an external script)
+- [x] Hot reloading with persisted windows state (requires a script)
 - [ ] Status bar
 - [ ] Multi-monitor support
 - [ ] Floating windows
@@ -58,4 +58,4 @@ do
   [[ $? == 42 ]] || break;
 done
 ```
-Build and install a new build of zwm. Restart zwm with `Mod + Shift + Q` (configurable in `src/config.zig`). Voilà: you using the new build and all windows are alive and in their workspaces.
+Build and install a new build of zwm. Restart zwm with `Mod + Shift + Q` (configurable in `src/config.zig`). Voilà: you are using the new build and all windows are alive and in their workspaces.
