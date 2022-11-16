@@ -1,4 +1,11 @@
-# ZWM
+```
+███████╗██╗    ██╗███╗   ███╗
+╚══███╔╝██║    ██║████╗ ████║
+  ███╔╝ ██║ █╗ ██║██╔████╔██║
+ ███╔╝  ██║███╗██║██║╚██╔╝██║
+███████╗╚███╔███╔╝██║ ╚═╝ ██║
+╚══════╝ ╚══╝╚══╝ ╚═╝     ╚═╝
+```
 
 Zwm is a dwm-inspired minimal tiling window manager for X implemented in Zig programming language.
 
