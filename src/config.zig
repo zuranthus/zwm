@@ -1,5 +1,7 @@
 const x11 = @import("x11.zig");
-const api = @import("hotkeys.zig");
+const commands = @import("commands.zig");
+const api = commands.api;
+const MouseAction = commands.MouseAction;
 
 pub const border = struct {
     pub const width = 3;
@@ -8,8 +10,10 @@ pub const border = struct {
     pub const color_focused = 0xff8000;
 };
 
+// Alt = Mod1Mask, Win = Mod4Mask
 pub const mod_key = x11.Mod1Mask;
-pub const hotkeys = .{
+
+pub const key_actions = .{
     .{ mod_key, x11.XK_H, api.decMaster, .{} },
     .{ mod_key, x11.XK_L, api.incMaster, .{} },
 
@@ -41,4 +45,9 @@ pub const hotkeys = .{
     .{ mod_key | x11.ShiftMask, x11.XK_7, api.moveToTag, .{7} },
     .{ mod_key | x11.ShiftMask, x11.XK_8, api.moveToTag, .{8} },
     .{ mod_key | x11.ShiftMask, x11.XK_9, api.moveToTag, .{9} },
+};
+
+pub const mouse_actions = .{
+    .{ MouseAction.Move, mod_key, x11.Button1 },
+    .{ MouseAction.Resize, mod_key, x11.Button3 },
 };

@@ -2,6 +2,7 @@ const std = @import("std");
 const x11 = @import("x11.zig");
 const log = @import("log.zig");
 const config = @import("config.zig");
+const commands = @import("commands.zig");
 const util = @import("util.zig");
 const clients_state = @import("clients_state.zig");
 const vec = @import("vec.zig");
@@ -66,18 +67,19 @@ pub const Manager = struct {
             ),
         );
         self.manageExistingWindows();
-        // show cursor
         var wa = std.mem.zeroes(x11.XSetWindowAttributes);
+        // show cursor
         wa.cursor = x11.XCreateFontCursor(self.display, x11.XC_left_ptr);
-        _ = x11.XChangeWindowAttributes(self.display, root, x11.CWCursor, &wa);
+        // select events
+        wa.event_mask = x11.SubstructureNotifyMask | x11.SubstructureRedirectMask;
+        _ = x11.XChangeWindowAttributes(self.display, root, x11.CWCursor | x11.CWEventMask, &wa);
         // hotkeys
-        // TODO extract?
         _ = x11.XUngrabKey(self.display, x11.AnyKey, x11.AnyModifier, root);
-        inline for (config.hotkeys) |hk|
+        inline for (config.key_actions) |a|
             _ = x11.XGrabKey(
                 self.display,
-                x11.XKeysymToKeycode(self.display, hk[1]),
-                hk[0],
+                x11.XKeysymToKeycode(self.display, a[1]),
+                a[0],
                 root,
                 0,
                 x11.GrabModeAsync,
@@ -190,34 +192,23 @@ pub const Manager = struct {
         _ = x11.XSelectInput(
             self.display,
             w,
-            x11.EnterWindowMask | x11.SubstructureRedirectMask | x11.SubstructureNotifyMask,
+            x11.EnterWindowMask,
         );
-        // move with mod + LB
-        _ = x11.XGrabButton(
-            self.display,
-            x11.Button1,
-            config.mod_key,
-            w,
-            0,
-            x11.ButtonPressMask | x11.ButtonReleaseMask | x11.ButtonMotionMask,
-            x11.GrabModeAsync,
-            x11.GrabModeAsync,
-            x11.None,
-            x11.None,
-        );
-        // resize with mod + RB
-        _ = x11.XGrabButton(
-            self.display,
-            x11.Button3,
-            config.mod_key,
-            w,
-            0,
-            x11.ButtonPressMask | x11.ButtonReleaseMask | x11.ButtonMotionMask,
-            x11.GrabModeAsync,
-            x11.GrabModeAsync,
-            x11.None,
-            x11.None,
-        );
+
+        inline for (config.mouse_actions) |a|
+            _ = x11.XGrabButton(
+                self.display,
+                a[2],
+                a[1],
+                w,
+                0,
+                x11.ButtonPressMask | x11.ButtonReleaseMask | x11.ButtonMotionMask,
+                x11.GrabModeAsync,
+                x11.GrabModeAsync,
+                x11.None,
+                x11.None,
+            );
+
         const new_node = self.clients.createNode();
         new_node.data = Client.init(w, self.display);
         const c = &new_node.data;
@@ -278,7 +269,7 @@ pub const Manager = struct {
             }
         };
         const defaultHandler = x11.XSetErrorHandler(Checker.onWmDetected);
-        _ = x11.XSelectInput(d, root, x11.SubstructureRedirectMask | x11.SubstructureNotifyMask);
+        _ = x11.XSelectInput(d, root, x11.SubstructureRedirectMask);
         _ = x11.XSync(d, 0);
         _ = x11.XSetErrorHandler(defaultHandler);
         return Checker.another_wm_detected;
@@ -311,17 +302,18 @@ const ErrorHandler = struct {
 
 const EventHandler = struct {
     const Self = @This();
-    const DragState = struct {
-        start_pos: Pos,
-        frame_pos: Pos,
-        frame_size: Size,
+    const MouseState = struct {
+        start_pos: Pos = undefined,
+        frame_pos: Pos = undefined,
+        frame_size: Size = undefined,
+        action: ?commands.MouseAction = null,
     };
 
     display: *x11.Display,
     wm: *Manager,
     wm_delete: x11.Atom = undefined,
     wm_protocols: x11.Atom = undefined,
-    drag_state: ?DragState = null,
+    mouse_state: MouseState = .{},
 
     fn init(d: *x11.Display, winMan: *Manager) EventHandler {
         return .{
@@ -413,51 +405,58 @@ const EventHandler = struct {
     fn onButtonPress(self: *Self, ev: x11.XButtonEvent) !void {
         log.trace("ButtonPress for {}", .{ev.window});
         const client = self.wm.findClientByWindow(ev.window) orelse @panic("Window is not a client");
-        const g = try client.getGeometry();
-        self.drag_state = DragState{
-            .start_pos = Pos.init(ev.x_root, ev.y_root),
-            .frame_pos = g.pos,
-            .frame_size = g.size,
-        };
+        const mstate = &self.mouse_state;
+
+        mstate.action = commands.firstMatchingMouseAction(config.mouse_actions, ev.button, ev.state) orelse null;
+
+        if (mstate.action != null) {
+            const g = try client.getGeometry();
+            mstate.start_pos = Pos.init(ev.x_root, ev.y_root);
+            mstate.frame_pos = g.pos;
+            mstate.frame_size = g.size;
+        }
         _ = x11.XRaiseWindow(self.display, client.w);
     }
 
     fn onButtonRelease(self: *Self, ev: x11.XButtonEvent) !void {
         _ = ev;
-        self.drag_state = null;
+        self.mouse_state.action = null;
     }
 
     fn onMotionNotify(self: *Self, ev: x11.XMotionEvent) !void {
         log.trace("MotionNotify for {}", .{ev.window});
-        if (self.drag_state == null) return;
-        const drag = self.drag_state.?;
+        if (self.mouse_state.action == null) return;
+        const mstate = &self.mouse_state;
 
         const c = self.wm.findClientByWindow(ev.window) orelse @panic("Window is not a client");
         const drag_pos = Pos.init(ev.x_root, ev.y_root);
         const delta = vec.IntVec2.init(
-            drag_pos.x - drag.start_pos.x,
-            drag_pos.y - drag.start_pos.y,
+            drag_pos.x - mstate.start_pos.x,
+            drag_pos.y - mstate.start_pos.y,
         );
 
-        if (ev.state & x11.Button1Mask != 0) {
-            const x = drag.frame_pos.x + delta.x;
-            const y = drag.frame_pos.y + delta.y;
-            log.info("Moving to ({}, {})", .{ x, y });
-            _ = x11.XMoveWindow(self.display, c.w, x, y);
-        } else if (ev.state & x11.Button3Mask != 0) {
-            const w = @intCast(u32, std.math.clamp(
-                drag.frame_size.x + delta.x,
-                c.min_size.x,
-                c.max_size.x,
-            ));
-            const h = @intCast(u32, std.math.clamp(
-                drag.frame_size.y + delta.y,
-                c.min_size.y,
-                c.max_size.y,
-            ));
+        switch (mstate.action.?) {
+            commands.MouseAction.Move => {
+                const x = mstate.frame_pos.x + delta.x;
+                const y = mstate.frame_pos.y + delta.y;
+                log.info("Moving to ({}, {})", .{ x, y });
+                _ = x11.XMoveWindow(self.display, c.w, x, y);
+            },
+            commands.MouseAction.Resize => {
+                const w = @intCast(u32, std.math.clamp(
+                    mstate.frame_size.x + delta.x,
+                    c.min_size.x,
+                    c.max_size.x,
+                ));
+                const h = @intCast(u32, std.math.clamp(
+                    mstate.frame_size.y + delta.y,
+                    c.min_size.y,
+                    c.max_size.y,
+                ));
 
-            log.info("Resizing to ({}, {})", .{ w, h });
-            _ = x11.XResizeWindow(self.display, ev.window, w, h);
+                log.info("Resizing to ({}, {})", .{ w, h });
+                _ = x11.XResizeWindow(self.display, ev.window, w, h);
+            },
         }
     }
 
@@ -504,10 +503,9 @@ const EventHandler = struct {
     }
 
     fn onKeyPress(self: *Self, ev: x11.XKeyEvent) !void {
-        // TODO extract?
-        inline for (config.hotkeys) |hk|
-            if (ev.keycode == x11.XKeysymToKeycode(self.display, hk[1]) and ev.state ^ hk[0] == 0)
-                @call(.{}, hk[2], .{self.wm} ++ hk[3]);
+        inline for (config.key_actions) |a|
+            if (ev.keycode == x11.XKeysymToKeycode(self.display, a[1]) and ev.state ^ a[0] == 0)
+                @call(.{}, a[2], .{self.wm} ++ a[3]);
     }
 
     fn onKeyRelease(self: *Self, ev: x11.XKeyEvent) !void {
