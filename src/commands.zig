@@ -9,16 +9,12 @@ const Manager = @import("wm.zig").Manager;
 pub const api = struct {
     pub fn selectTag(m: *Manager, tag: u8) void {
         m.focusWorkspace(tag);
-        m.updateFocus(false);
-        m.markLayoutDirty();
     }
 
     pub fn moveToTag(m: *Manager, tag: u8) void {
         if (m.activeWorkspace().id == tag) return;
         if (m.focused_client) |client| {
             m.moveClientToWorkspace(client, client.monitor_id.?, tag);
-            m.updateFocus(false);
-            m.markLayoutDirty();
         }
     }
 
@@ -27,20 +23,14 @@ pub const api = struct {
     }
 
     pub fn focusNext(m: *Manager) void {
-        if (m.focused_client) |client| {
-            const w = m.activeWorkspace();
-            std.debug.assert(w.active_client == client);
-            w.activateNextClient();
-            m.updateFocus(false);
+        if (m.focused_client != null) {
+            m.focusNextClient();
         }
     }
 
     pub fn focusPrev(m: *Manager) void {
-        if (m.focused_client) |client| {
-            const w = m.activeWorkspace();
-            std.debug.assert(w.active_client == client);
-            w.activatePrevClient();
-            m.updateFocus(false);
+        if (m.focused_client != null) {
+            m.focusPrevClient();
         }
     }
 
@@ -51,13 +41,12 @@ pub const api = struct {
         if (m.focused_client) |client| {
             std.debug.assert(w.active_client == client);
             if (client != w.clients.items[0]) {
-                _ = w.swapWithFirst(client);
+                _ = w.swapWithFirstClient(client);
             } else {
                 // focused client is already the first
                 // swap it with the next one and activate the new first
                 const new_active_client = w.swapWithNextClient(client);
-                w.activateClient(new_active_client);
-                m.updateFocus(false);
+                m.focusClient(new_active_client);
             }
             m.markLayoutDirty();
         }

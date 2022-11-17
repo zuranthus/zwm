@@ -135,16 +135,42 @@ pub const Manager = struct {
         self.updateFocus(false);
     }
 
+    pub fn focusNextClient(self: *Self) void {
+        const w = self.activeWorkspace();
+        std.debug.assert(self.focused_client != null);
+        std.debug.assert(w.active_client == self.focused_client.?);
+        w.activateNextClient();
+        self.updateFocus(false);
+    }
+
+    pub fn focusPrevClient(self: *Self) void {
+        const w = self.activeWorkspace();
+        std.debug.assert(self.focused_client != null);
+        std.debug.assert(w.active_client == self.focused_client.?);
+        w.activatePrevClient();
+        self.updateFocus(false);
+    }
+
     pub fn moveClientToWorkspace(self: *Self, client: *Client, monitor_id: u8, workspace_id: u8) void {
         std.debug.assert(monitor_id == 0); // TODO: change after implementing multi-monitor support
         if (client.monitor_id == monitor_id and client.workspace_id == workspace_id) return;
         self.monitor.removeClient(client);
         self.monitor.addClient(client, workspace_id);
+        self.updateFocus(false);
+        self.markLayoutDirty();
+    }
+
+    pub fn markLayoutDirty(self: *Self) void {
+        self.layout_dirty = true;
+    }
+
+    pub fn killClientWindow(self: *Self, client: *Client) void {
+        self.event_handler.killWindow(client.w) catch unreachable;
     }
 
     /// Switch focus to the active client of the active workspace of the active monitor.
     /// Do nothing if client is already focused, unless forceUpdate is true.
-    pub fn updateFocus(self: *Self, forceUpdate: bool) void {
+    fn updateFocus(self: *Self, forceUpdate: bool) void {
         const client = self.activeClient();
         if (!forceUpdate and self.focused_client == client) return;
 
@@ -168,14 +194,6 @@ pub const Manager = struct {
             _ = x11.XSetInputFocus(self.display, x11.PointerRoot, x11.RevertToPointerRoot, x11.CurrentTime);
             log.info("Cleared focus", .{});
         }
-    }
-
-    pub fn markLayoutDirty(self: *Self) void {
-        self.layout_dirty = true;
-    }
-
-    pub fn killClientWindow(self: *Self, client: *Client) void {
-        self.event_handler.killWindow(client.w) catch unreachable;
     }
 
     fn manageExistingWindows(self: *Self) void {

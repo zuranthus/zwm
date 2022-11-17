@@ -60,7 +60,7 @@ pub const Workspace = struct {
         return self.clients.items[i];
     }
 
-    pub fn swapWithFirst(self: *Self, client: *Client) *Client {
+    pub fn swapWithFirstClient(self: *Self, client: *Client) *Client {
         const i = util.findIndex(self.clients.items, client).?;
         util.swap(self.clients.items, i, 0);
         return self.clients.items[i];
