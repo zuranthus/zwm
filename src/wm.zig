@@ -112,16 +112,27 @@ pub const Manager = struct {
         return self.activeMonitor().activeWorkspace();
     }
 
-    pub fn activateWorkspace(self: *Self, workspace_id: u8) void {
+    pub fn focusWorkspace(self: *Self, workspace_id: u8) void {
+        // TODO: multi-monitor
         self.activeMonitor().activateWorkspace(workspace_id);
+        self.updateFocus(false);
+        self.markLayoutDirty();
     }
 
     pub fn activeClient(self: *Self) ?*Client {
         return self.activeWorkspace().active_client;
     }
 
-    pub fn activateClient(self: *Self, client: *Client) void {
+    /// Activate and switch focus to client.
+    /// Also activate its monitor and workspace if they are not active.
+    pub fn focusClient(self: *Self, client: *Client) void {
+        // TODO: revisit for multi-monitor support
+        if (client.workspace_id.? != self.activeWorkspace().id) {
+            self.activeMonitor().activateWorkspace(client.workspace_id.?);
+            self.markLayoutDirty();
+        }
         self.activeWorkspace().activateClient(client);
+        self.updateFocus(false);
     }
 
     pub fn moveClientToWorkspace(self: *Self, client: *Client, monitor_id: u8, workspace_id: u8) void {
@@ -131,17 +142,26 @@ pub const Manager = struct {
         self.monitor.addClient(client, workspace_id);
     }
 
+    /// Switch focus to the active client of the active workspace of the active monitor.
+    /// Do nothing if client is already focused, unless forceUpdate is true.
     pub fn updateFocus(self: *Self, forceUpdate: bool) void {
         const client = self.activeClient();
         if (!forceUpdate and self.focused_client == client) return;
 
-        if (self.focused_client) |fc| fc.setFocusedBorder(false);
-
+        const prev_focused_client = self.focused_client;
         self.focused_client = client;
+
+        if (prev_focused_client) |c| {
+            c.setFocusedBorder(false);
+            self.grabMouseButtons(c);
+        }
+
         if (client) |c| {
             // update border state and grab focus
             c.setFocusedBorder(true);
             _ = x11.XSetInputFocus(self.display, c.w, x11.RevertToPointerRoot, x11.CurrentTime);
+            _ = x11.XRaiseWindow(self.display, c.w);
+            self.grabMouseButtons(c);
             log.info("Focused client {}", .{c.w});
         } else {
             // reset focus
@@ -195,23 +215,10 @@ pub const Manager = struct {
             x11.EnterWindowMask,
         );
 
-        inline for (config.mouse_actions) |a|
-            _ = x11.XGrabButton(
-                self.display,
-                a[2],
-                a[1],
-                w,
-                0,
-                x11.ButtonPressMask | x11.ButtonReleaseMask | x11.ButtonMotionMask,
-                x11.GrabModeAsync,
-                x11.GrabModeAsync,
-                x11.None,
-                x11.None,
-            );
-
         const new_node = self.clients.createNode();
         new_node.data = Client.init(w, self.display);
         const c = &new_node.data;
+        self.grabMouseButtons(c);
         log.info("Added client {}", .{w});
         log.trace("min_size ({}, {}), max_size ({}, {})", .{ c.min_size.x, c.min_size.y, c.max_size.x, c.max_size.y });
         return c;
@@ -235,6 +242,38 @@ pub const Manager = struct {
     fn findClientByWindow(self: *Self, w: x11.Window) ?*Client {
         if (self.findNodeByWindow(w)) |node| return &node.data;
         return null;
+    }
+
+    fn grabMouseButtons(self: *Self, c: *Client) void {
+        _ = x11.XUngrabButton(self.display, x11.AnyButton, x11.AnyModifier, c.w);
+        if (c != self.focused_client) {
+            // Focus unfocused clients on mouse button down event
+            _ = x11.XGrabButton(
+                self.display,
+                x11.AnyButton,
+                x11.AnyModifier,
+                c.w,
+                0,
+                x11.ButtonPressMask,
+                x11.GrabModeAsync,
+                x11.GrabModeAsync,
+                x11.None,
+                x11.None,
+            );
+        }
+        inline for (config.mouse_actions) |a|
+            _ = x11.XGrabButton(
+                self.display,
+                a[2],
+                a[1],
+                c.w,
+                0,
+                x11.ButtonPressMask | x11.ButtonReleaseMask | x11.ButtonMotionMask,
+                x11.GrabModeAsync,
+                x11.GrabModeAsync,
+                x11.None,
+                x11.None,
+            );
     }
 
     fn applyLayout(self: *Self) void {
@@ -405,36 +444,36 @@ const EventHandler = struct {
     fn onButtonPress(self: *Self, ev: x11.XButtonEvent) !void {
         log.trace("ButtonPress for {}", .{ev.window});
         const client = self.wm.findClientByWindow(ev.window) orelse @panic("Window is not a client");
+        if (client != self.wm.focused_client) self.wm.focusClient(client);
+
         const mstate = &self.mouse_state;
-
         mstate.action = commands.firstMatchingMouseAction(config.mouse_actions, ev.button, ev.state) orelse null;
-
         if (mstate.action != null) {
             const g = try client.getGeometry();
             mstate.start_pos = Pos.init(ev.x_root, ev.y_root);
             mstate.frame_pos = g.pos;
             mstate.frame_size = g.size;
         }
-        _ = x11.XRaiseWindow(self.display, client.w);
     }
 
     fn onButtonRelease(self: *Self, ev: x11.XButtonEvent) !void {
-        _ = ev;
+        log.trace("ButtonRelease for {}", .{ev.window});
         self.mouse_state.action = null;
     }
 
     fn onMotionNotify(self: *Self, ev: x11.XMotionEvent) !void {
         log.trace("MotionNotify for {}", .{ev.window});
+
         if (self.mouse_state.action == null) return;
         const mstate = &self.mouse_state;
 
-        const c = self.wm.findClientByWindow(ev.window) orelse @panic("Window is not a client");
         const drag_pos = Pos.init(ev.x_root, ev.y_root);
         const delta = vec.IntVec2.init(
             drag_pos.x - mstate.start_pos.x,
             drag_pos.y - mstate.start_pos.y,
         );
 
+        const c = self.wm.findClientByWindow(ev.window) orelse @panic("Window is not a client");
         switch (mstate.action.?) {
             commands.MouseAction.Move => {
                 const x = mstate.frame_pos.x + delta.x;
@@ -462,10 +501,8 @@ const EventHandler = struct {
 
     fn onEnterNotify(self: *Self, ev: x11.XCrossingEvent) !void {
         log.trace("EnterNotify for {}", .{ev.window});
-        if (ev.mode != x11.NotifyNormal or ev.detail == x11.NotifyInferior) return;
         const client = self.wm.findClientByWindow(ev.window) orelse @panic("Window is not a client");
-        self.wm.activateClient(client);
-        self.wm.updateFocus(false);
+        self.wm.focusClient(client);
     }
 
     fn sendEvent(self: *Self, w: x11.Window, protocol: x11.Atom) !void {

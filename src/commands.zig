@@ -8,7 +8,7 @@ const Manager = @import("wm.zig").Manager;
 
 pub const api = struct {
     pub fn selectTag(m: *Manager, tag: u8) void {
-        m.activateWorkspace(tag);
+        m.focusWorkspace(tag);
         m.updateFocus(false);
         m.markLayoutDirty();
     }
