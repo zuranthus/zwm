@@ -44,13 +44,13 @@ Modify `src/config.zig` before building and installing.
 
 # Usage
 
-The easiest way is to start zwm with `startx` by adding `exec zwm` to your `~/.xinitrc`.
+The easiest way is to start zwm with `startx` by adding `exec zwm` to `~/.xinitrc`.
 
 ### Hot Reloading
 
-It is possible to restart zwm while keeping windows and their workspace distribution intact. This makes it easier to update zwm to a newer build.
+It is possible to restart zwm while keeping windows and their workspace distribution intact. This makes updating zwm binary a quick and painless process.
 
-Use the following script in `~/.xinitrc`
+Enabling hot reloading is easy: use the following script in `~/.xinitrc` instead of a simple `exec zwm`
 ```bash
 while :
 do
@@ -58,4 +58,5 @@ do
   [[ $? == 42 ]] || break;
 done
 ```
-Build and install a new build of zwm. Restart zwm with `Mod + Shift + Q` (configurable in `src/config.zig`). Voilà: you are using the new build and all windows are alive and in their workspaces.
+
+Now if you build and install a new zwm build, restart zwm with `Mod + Shift + Q` (configurable in `src/config.zig`). Voilà: you are running the new build and all windows are alive and in their workspaces.
