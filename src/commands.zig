@@ -53,12 +53,12 @@ pub const api = struct {
     }
 
     pub fn incMaster(m: *Manager) void {
-        m.monitor.mainSize = std.math.min(m.monitor.mainSize + 5.0, 80.0);
+        m.monitor.main_size = std.math.min(m.monitor.main_size + 5.0, 80.0);
         m.markLayoutDirty();
     }
 
     pub fn decMaster(m: *Manager) void {
-        m.monitor.mainSize = std.math.max(m.monitor.mainSize - 5.0, 20.0);
+        m.monitor.main_size = std.math.max(m.monitor.main_size - 5.0, 20.0);
         m.markLayoutDirty();
     }
 

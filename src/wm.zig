@@ -158,6 +158,7 @@ pub const Manager = struct {
         self.monitor.addClient(client, workspace_id);
         self.updateFocus(false);
         self.markLayoutDirty();
+        log.trace("Moved client {} to ({}, {})", .{client.w, monitor_id, workspace_id});
     }
 
     pub fn markLayoutDirty(self: *Self) void {

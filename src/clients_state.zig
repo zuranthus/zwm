@@ -24,7 +24,7 @@ pub fn saveState(m: *Manager, state_file: []const u8) !void {
     try writer.writeIntLittle(u8, active_workspace_id);
 
     // main factor
-    const main_factor: f32 = m.activeMonitor().mainSize;
+    const main_factor: f32 = m.activeMonitor().main_size;
     try writer.writeAll(std.mem.asBytes(&main_factor));
 
     // client state
@@ -58,7 +58,7 @@ pub fn loadState(m: *Manager, state_file: []const u8) !void {
     // main factor
     var main_factor: f32 = 50.0;
     _ = try reader.readAll(std.mem.asBytes(&main_factor));
-    m.activeMonitor().mainSize = main_factor;
+    m.activeMonitor().main_size = main_factor;
 
     // client state
     while (true) {
