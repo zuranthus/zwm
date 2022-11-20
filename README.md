@@ -19,7 +19,7 @@ that is easier to hack than dwm. Both goals are work in progress :)
 - [x] Focus and window management commands
 - [x] Spawn process command
 - [x] Customizable config file
-- [x] Hot reloading with persisted windows state (requires a script)
+- [x] Hot reloading with persisted windows state (requires a [script](#hot-reloading))
 - [ ] Status bar
 - [ ] Multi-monitor support
 - [ ] Floating windows
