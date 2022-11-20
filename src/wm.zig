@@ -37,12 +37,12 @@ pub const Manager = struct {
             };
         }
 
+        _ = x11.XUngrabKey(self.display, x11.AnyKey, x11.AnyModifier, x11.XDefaultRootWindow(self.display));
         self.monitor.deinit();
         self.event_handler.deinit();
-        const root = x11.XDefaultRootWindow(self.display);
-        _ = x11.XUngrabKey(self.display, x11.AnyKey, x11.AnyModifier, root);
-        _ = x11.XCloseDisplay(self.display);
+        self.clients.deinit();
         ErrorHandler.deregister();
+        _ = x11.XCloseDisplay(self.display);
         is_instance_alive = false;
         log.info("Destroyed wm", .{});
     }
@@ -52,10 +52,13 @@ pub const Manager = struct {
         const display_name: [:0]const u8 = if (display_name_arg) |name| name else ":0";
         const display = x11.XOpenDisplay(@ptrCast([*c]const u8, display_name)) orelse return error.CannotOpenDisplay;
         const root = x11.XDefaultRootWindow(display);
-        if (isAnotherWmDetected(display, root)) return error.AnotherWmDetected;
-        ErrorHandler.register();
+        if (isAnotherWmDetected(display, root)) {
+            _ = x11.XCloseDisplay(display);
+            return error.AnotherWmDetected;
+        }
 
         is_instance_alive = true;
+        ErrorHandler.register();
         self.display = display;
         self.clients = ClientOwner.init();
         self.event_handler = EventHandler.init(display, self);

@@ -46,9 +46,7 @@ pub fn OwningList(comptime Type: type) type {
         }
 
         pub fn deinit(self: *Self) void {
-            var it = self.list.first;
-            while (it) |node| : (it = node.next) std.heap.c_allocator.destroy(node);
-            self.list = .{};
+            while (self.list.first) |node| self.destroyNode(node);
         }
 
         pub fn createNode(self: *Self) *Node {
