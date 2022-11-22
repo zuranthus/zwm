@@ -26,6 +26,7 @@ pub const Manager = struct {
     layout_dirty: bool = false,
     exit_code: ?u8 = null,
     state_file: ?[]const u8 = null,
+    atoms: Atoms = undefined,
 
     pub fn deinit(self: *Self) void {
         if (!is_instance_alive) return;
@@ -41,6 +42,7 @@ pub const Manager = struct {
         self.monitor.deinit();
         self.event_handler.deinit();
         self.clients.deinit();
+        self.atoms.deinit(self.display);
         ErrorHandler.deregister();
         _ = x11.XCloseDisplay(self.display);
         is_instance_alive = false;
@@ -60,6 +62,7 @@ pub const Manager = struct {
         is_instance_alive = true;
         ErrorHandler.register();
         self.display = display;
+        self.atoms = Atoms.init(self.display);
         self.clients = ClientOwner.init();
         self.event_handler = EventHandler.init(display, self);
         const screen = x11.XDefaultScreen(display);
@@ -260,8 +263,9 @@ pub const Manager = struct {
         );
 
         var w_trans: x11.Window = undefined;
-        const is_transitive = x11.XGetTransientForHint(self.display, w, &w_trans) != 0;
-        const is_floating = is_transitive;
+        const is_transient = x11.XGetTransientForHint(self.display, w, &w_trans) != 0;
+        const is_dialog = (self.getWindowProperty(w, self.atoms.net_wm_window_type) == self.atoms.net_wm_window_type_dialog);
+        const is_floating = is_transient or is_dialog;
 
         const new_node = self.clients.createNode();
         new_node.data = Client.init(w, self.display, is_floating);
@@ -272,7 +276,7 @@ pub const Manager = struct {
 
         var workspace_id: ?u8 = null;
         // Transient windows appear on the same workspace as their parents
-        if (is_transitive) {
+        if (is_transient) {
             if (self.findClientByWindow(w_trans)) |c_trans|
                 workspace_id = c_trans.workspace_id;
         }
@@ -280,6 +284,8 @@ pub const Manager = struct {
 
         log.info("Added client {}", .{w});
         log.trace("min_size ({}, {}), max_size ({}, {})", .{ c.min_size.x, c.min_size.y, c.max_size.x, c.max_size.y });
+        if (is_transient) log.trace("window is transient", .{});
+        if (is_dialog) log.trace("window is dialog", .{});
         return c;
     }
 
@@ -301,6 +307,33 @@ pub const Manager = struct {
     fn findClientByWindow(self: *Self, w: x11.Window) ?*Client {
         if (self.findNodeByWindow(w)) |node| return &node.data;
         return null;
+    }
+
+    fn getWindowProperty(self: *Self, w: x11.Window, property: x11.Atom) x11.Atom {
+        var result: x11.Atom = x11.None;
+        var actual_type: x11.Atom = undefined;
+        var actual_format: c_int = undefined;
+        var nitems: c_long = undefined;
+        var bytes_left: c_long = undefined;
+        var data: ?*x11.Atom = undefined;
+        if (x11.XGetWindowProperty(
+            self.display,
+            w,
+            property,
+            0,
+            @sizeOf(x11.Atom),
+            0,
+            x11.XA_ATOM,
+            &actual_type,
+            &actual_format,
+            @ptrCast([*c]c_ulong, &nitems),
+            @ptrCast([*c]c_ulong, &bytes_left),
+            @ptrCast([*c][*c]u8, &data),
+        ) == x11.Success and data != null) {
+            result = data.?.*;
+            _ = x11.XFree(data);
+        }
+        return result;
     }
 
     fn grabMouseButtons(self: *Self, c: *Client) void {
@@ -402,12 +435,36 @@ const ErrorHandler = struct {
 const Atoms = struct {
     wm_delete: x11.Atom,
     wm_protocols: x11.Atom,
+    net_supported: x11.Atom,
+    net_wm_window_type: x11.Atom,
+    net_wm_window_type_dialog: x11.Atom,
 
     fn init(d: *x11.Display) Atoms {
-        return .{
+        const atoms = Atoms{
             .wm_delete = x11.XInternAtom(d, "WM_DELETE_WINDOW", 0),
             .wm_protocols = x11.XInternAtom(d, "WM_PROTOCOLS", 0),
+            .net_supported = x11.XInternAtom(d, "_NET_SUPPORTED", 0),
+            .net_wm_window_type = x11.XInternAtom(d, "_NET_WM_WINDOW_TYPE", 0),
+            .net_wm_window_type_dialog = x11.XInternAtom(d, "_NET_WM_WINDOW_TYPE_DIALOG", 0),
         };
+
+        const supported_net_atoms = [_]c_ulong{
+            atoms.net_supported,
+            atoms.net_wm_window_type,
+            atoms.net_wm_window_type_dialog,
+        };
+        _ = x11.XChangeProperty(
+            d,
+            x11.XDefaultRootWindow(d),
+            atoms.net_supported,
+            x11.XA_ATOM,
+            32,
+            x11.PropModeReplace,
+            @ptrCast([*c]const u8, &supported_net_atoms),
+            supported_net_atoms.len,
+        );
+
+        return atoms;
     }
 
     fn deinit(self: @This(), d: *x11.Display) void {
@@ -428,18 +485,16 @@ const EventHandler = struct {
     display: *x11.Display,
     wm: *Manager,
     mouse_state: MouseState = .{},
-    atoms: Atoms,
 
     fn init(d: *x11.Display, winMan: *Manager) EventHandler {
         return .{
             .display = d,
             .wm = winMan,
-            .atoms = Atoms.init(d),
         };
     }
 
     fn deinit(self: *Self) void {
-        self.atoms.deinit(self.display);
+        _ = self;
     }
 
     fn processEvent(self: *Self) !void {
@@ -582,7 +637,7 @@ const EventHandler = struct {
     fn sendEvent(self: *Self, w: x11.Window, protocol: x11.Atom) !void {
         var event = std.mem.zeroes(x11.XEvent);
         event.type = x11.ClientMessage;
-        event.xclient.message_type = self.atoms.wm_protocols;
+        event.xclient.message_type = self.wm.atoms.wm_protocols;
         event.xclient.window = w;
         event.xclient.format = 32;
         event.xclient.data.l[0] = @intCast(c_long, protocol);
@@ -598,7 +653,7 @@ const EventHandler = struct {
         var supports_delete = false;
         if (count > 0) {
             for (protocols[0..@intCast(usize, count)]) |p| {
-                if (p == self.atoms.wm_delete) {
+                if (p == self.wm.atoms.wm_delete) {
                     supports_delete = true;
                     break;
                 }
@@ -606,7 +661,7 @@ const EventHandler = struct {
         }
         if (supports_delete) {
             log.info("Sending wm_delete to {}", .{w});
-            try self.sendEvent(w, self.atoms.wm_delete);
+            try self.sendEvent(w, self.wm.atoms.wm_delete);
         } else {
             log.info("Killing {}", .{w});
             _ = x11.XKillClient(self.display, w);
