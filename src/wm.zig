@@ -161,7 +161,7 @@ pub const Manager = struct {
         self.monitor.addClient(client, workspace_id);
         self.updateFocus(false);
         self.markLayoutDirty();
-        log.trace("Moved client {} to ({}, {})", .{client.w, monitor_id, workspace_id});
+        log.trace("Moved client {} to ({}, {})", .{ client.w, monitor_id, workspace_id });
     }
 
     pub fn markLayoutDirty(self: *Self) void {
@@ -202,26 +202,51 @@ pub const Manager = struct {
 
     fn manageExistingWindows(self: *Self) void {
         const root = x11.XDefaultRootWindow(self.display);
-        var root_ret: x11.Window = undefined;
-        var parent: x11.Window = undefined;
-        var ws: [*c]x11.Window = null;
-        var nws: c_uint = 0;
-        _ = x11.XQueryTree(self.display, root, &root_ret, &parent, &ws, &nws);
-        defer _ = if (ws != null) x11.XFree(ws);
-        if (nws > 0) for (ws[0..nws]) |w| {
+        var unused_win: x11.Window = undefined;
+        var windows: [*c]x11.Window = null;
+        var num: c_uint = 0;
+        _ = x11.XQueryTree(self.display, root, &unused_win, &unused_win, &windows, &num);
+        defer _ = if (windows != null) x11.XFree(windows);
+        if (num == 0) return;
+
+        // Manage non-transient windows
+        for (windows[0..num]) |w| {
             var wa = std.mem.zeroes(x11.XWindowAttributes);
             if (x11.XGetWindowAttributes(self.display, w, &wa) == 0) {
                 log.err("XGetWindowAttributes failed for {}", .{w});
                 continue;
             }
-            // Only add windows that are visible and don't set override_redirect
-            if (wa.override_redirect == 0 and wa.map_state == x11.IsViewable) {
+            if (wa.override_redirect != 0 or x11.XGetTransientForHint(self.display, w, &unused_win) != 0)
+                continue;
+
+            // Only add windows that are visible
+            if (wa.map_state == x11.IsViewable) {
                 const c = self.createClient(w) catch unreachable;
                 self.activeMonitor().addClient(c, null);
             } else {
-                log.info("Ignoring {}", .{w});
+                log.info("Ignoring hidden {}", .{w});
             }
-        };
+        }
+
+        // Manage transient windows
+        for (windows[0..num]) |w| {
+            var wa = std.mem.zeroes(x11.XWindowAttributes);
+            if (x11.XGetWindowAttributes(self.display, w, &wa) == 0) {
+                log.err("XGetWindowAttributes failed for {}", .{w});
+                continue;
+            }
+            if (wa.override_redirect != 0 or x11.XGetTransientForHint(self.display, w, &unused_win) == 0)
+                continue;
+
+            // Only add windows that are visible
+            if (wa.map_state == x11.IsViewable) {
+                const c = self.createClient(w) catch unreachable;
+                self.activeMonitor().addClient(c, null);
+            } else {
+                log.info("Ignoring hidden transient {}", .{w});
+            }
+        }
+
         self.updateFocus(true);
         self.markLayoutDirty();
     }
@@ -237,8 +262,12 @@ pub const Manager = struct {
             x11.EnterWindowMask,
         );
 
+        var w_trans: x11.Window = undefined;
+        const is_transitive = x11.XGetTransientForHint(self.display, w, &w_trans) != 0;
+        const is_floating = is_transitive;
+
         const new_node = self.clients.createNode();
-        new_node.data = Client.init(w, self.display);
+        new_node.data = Client.init(w, self.display, is_floating);
         const c = &new_node.data;
         self.grabMouseButtons(c);
         log.info("Added client {}", .{w});
@@ -376,7 +405,6 @@ const Atoms = struct {
         _ = self;
         _ = d;
     }
-
 };
 
 const EventHandler = struct {

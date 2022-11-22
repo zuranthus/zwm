@@ -17,6 +17,7 @@ pub const Client = struct {
     monitor_id: ?u8 = null,
     workspace_id: ?u8 = null,
 
+    is_floating: bool = false,
     min_size: Size = undefined,
     max_size: Size = undefined,
 
@@ -25,8 +26,8 @@ pub const Client = struct {
         size: Size,
     };
 
-    pub fn init(win: x11.Window, d: *x11.Display) Client {
-        var c = Client{ .w = win, .d = d };
+    pub fn init(win: x11.Window, d: *x11.Display, floating: bool) Client {
+        var c = Client{ .w = win, .d = d, .is_floating = floating };
         c.setFocusedBorder(false);
         _ = x11.XSetWindowBorderWidth(c.d, c.w, config.border.width);
         c.updateSizeHints() catch unreachable;
