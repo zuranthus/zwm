@@ -361,6 +361,24 @@ const ErrorHandler = struct {
     }
 };
 
+const Atoms = struct {
+    wm_delete: x11.Atom,
+    wm_protocols: x11.Atom,
+
+    fn init(d: *x11.Display) Atoms {
+        return .{
+            .wm_delete = x11.XInternAtom(d, "WM_DELETE_WINDOW", 0),
+            .wm_protocols = x11.XInternAtom(d, "WM_PROTOCOLS", 0),
+        };
+    }
+
+    fn deinit(self: @This(), d: *x11.Display) void {
+        _ = self;
+        _ = d;
+    }
+
+};
+
 const EventHandler = struct {
     const Self = @This();
     const MouseState = struct {
@@ -372,21 +390,19 @@ const EventHandler = struct {
 
     display: *x11.Display,
     wm: *Manager,
-    wm_delete: x11.Atom = undefined,
-    wm_protocols: x11.Atom = undefined,
     mouse_state: MouseState = .{},
+    atoms: Atoms,
 
     fn init(d: *x11.Display, winMan: *Manager) EventHandler {
         return .{
             .display = d,
             .wm = winMan,
-            .wm_delete = x11.XInternAtom(d, "WM_DELETE_WINDOW", 0),
-            .wm_protocols = x11.XInternAtom(d, "WM_PROTOCOLS", 0),
+            .atoms = Atoms.init(d),
         };
     }
 
     fn deinit(self: *Self) void {
-        _ = self;
+        self.atoms.deinit(self.display);
     }
 
     fn processEvent(self: *Self) !void {
@@ -530,7 +546,7 @@ const EventHandler = struct {
     fn sendEvent(self: *Self, w: x11.Window, protocol: x11.Atom) !void {
         var event = std.mem.zeroes(x11.XEvent);
         event.type = x11.ClientMessage;
-        event.xclient.message_type = self.wm_protocols;
+        event.xclient.message_type = self.atoms.wm_protocols;
         event.xclient.window = w;
         event.xclient.format = 32;
         event.xclient.data.l[0] = @intCast(c_long, protocol);
@@ -546,7 +562,7 @@ const EventHandler = struct {
         var supports_delete = false;
         if (count > 0) {
             for (protocols[0..@intCast(usize, count)]) |p| {
-                if (p == self.wm_delete) {
+                if (p == self.atoms.wm_delete) {
                     supports_delete = true;
                     break;
                 }
@@ -554,7 +570,7 @@ const EventHandler = struct {
         }
         if (supports_delete) {
             log.info("Sending wm_delete to {}", .{w});
-            try self.sendEvent(w, self.wm_delete);
+            try self.sendEvent(w, self.atoms.wm_delete);
         } else {
             log.info("Killing {}", .{w});
             _ = x11.XKillClient(self.display, w);
