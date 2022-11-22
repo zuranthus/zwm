@@ -190,7 +190,6 @@ pub const Manager = struct {
             // update border state and grab focus
             c.setFocusedBorder(true);
             _ = x11.XSetInputFocus(self.display, c.w, x11.RevertToPointerRoot, x11.CurrentTime);
-            _ = x11.XRaiseWindow(self.display, c.w);
             self.grabMouseButtons(c);
             log.info("Focused client {}", .{c.w});
         } else {
@@ -270,6 +269,9 @@ pub const Manager = struct {
         new_node.data = Client.init(w, self.display, is_floating);
         const c = &new_node.data;
         self.grabMouseButtons(c);
+        if (is_floating)
+            _ = x11.XRaiseWindow(self.display, c.w);
+
         log.info("Added client {}", .{w});
         log.trace("min_size ({}, {}), max_size ({}, {})", .{ c.min_size.x, c.min_size.y, c.max_size.x, c.max_size.y });
         return c;
