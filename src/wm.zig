@@ -220,8 +220,7 @@ pub const Manager = struct {
 
             // Only add windows that are visible
             if (wa.map_state == x11.IsViewable) {
-                const c = self.createClient(w) catch unreachable;
-                self.activeMonitor().addClient(c, null);
+                _ = self.createClient(w) catch unreachable;
             } else {
                 log.info("Ignoring hidden {}", .{w});
             }
@@ -239,8 +238,7 @@ pub const Manager = struct {
 
             // Only add windows that are visible
             if (wa.map_state == x11.IsViewable) {
-                const c = self.createClient(w) catch unreachable;
-                self.activeMonitor().addClient(c, null);
+                _ = self.createClient(w) catch unreachable;
             } else {
                 log.info("Ignoring hidden transient {}", .{w});
             }
@@ -271,6 +269,14 @@ pub const Manager = struct {
         self.grabMouseButtons(c);
         if (is_floating)
             _ = x11.XRaiseWindow(self.display, c.w);
+
+        var workspace_id: ?u8 = null;
+        // Transient windows appear on the same workspace as their parents
+        if (is_transitive) {
+            if (self.findClientByWindow(w_trans)) |c_trans|
+                workspace_id = c_trans.workspace_id;
+        }
+        self.activeMonitor().addClient(c, workspace_id);
 
         log.info("Added client {}", .{w});
         log.trace("min_size ({}, {}), max_size ({}, {})", .{ c.min_size.x, c.min_size.y, c.max_size.x, c.max_size.y });
@@ -334,6 +340,7 @@ pub const Manager = struct {
 
         self.activeMonitor().applyLayout(TileLayout);
         // TODO: figure out a more elegant solution?
+        // TODO: BUG floating windows disappear!
         const mon_id = self.activeMonitor().id;
         const w_id = self.activeWorkspace().id;
         var it = self.clients.list.first;
@@ -500,11 +507,10 @@ const EventHandler = struct {
         const w = ev.window;
         log.trace("MapRequest for {}", .{w});
         _ = x11.XMapWindow(self.display, w);
-        const c = self.wm.createClient(w) catch |e| {
+        _ = self.wm.createClient(w) catch |e| {
             log.err("error {}", .{e});
             return;
         };
-        self.wm.activeMonitor().addClient(c, null);
         self.wm.updateFocus(false);
         self.wm.markLayoutDirty();
     }
