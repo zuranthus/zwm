@@ -254,8 +254,6 @@ pub const Manager = struct {
     fn createClient(self: *Self, w: x11.Window) !*Client {
         if (self.findClientByWindow(w) != null) return error.WindowAlreadyManaged;
 
-        var wa = std.mem.zeroes(x11.XWindowAttributes);
-        if (x11.XGetWindowAttributes(self.display, w, &wa) == 0) unreachable;
         _ = x11.XSelectInput(
             self.display,
             w,
@@ -561,11 +559,16 @@ const EventHandler = struct {
     fn onMapRequest(self: *Self, ev: x11.XMapRequestEvent) void {
         const w = ev.window;
         log.trace("MapRequest for {}", .{w});
-        _ = x11.XMapWindow(self.display, w);
+        var wa = std.mem.zeroes(x11.XWindowAttributes);
+        if (x11.XGetWindowAttributes(self.display, w, &wa) == 0 or wa.override_redirect != 0) {
+            log.trace("ignored map request", .{});
+            return;
+        }
         _ = self.wm.createClient(w) catch |e| {
             log.err("error {}", .{e});
             return;
         };
+        _ = x11.XMapWindow(self.display, w);
         self.wm.updateFocus(false);
         self.wm.markLayoutDirty();
     }
@@ -576,7 +579,7 @@ const EventHandler = struct {
         if (client != self.wm.focused_client) self.wm.focusClient(client);
 
         const mstate = &self.mouse_state;
-        mstate.action = commands.firstMatchingMouseAction(config.mouse_actions, ev.button, ev.state) orelse null;
+        mstate.action = commands.firstMatchingMouseAction(config.mouse_actions, ev.button, ev.state);
         if (mstate.action != null) {
             const g = try client.getGeometry();
             mstate.start_pos = Pos.init(ev.x_root, ev.y_root);
