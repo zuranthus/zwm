@@ -30,7 +30,7 @@ pub const Client = struct {
         var c = Client{ .w = win, .d = d, .is_floating = floating };
         c.setFocusedBorder(false);
         _ = x11.XSetWindowBorderWidth(c.d, c.w, config.border.width);
-        c.updateSizeHints() catch unreachable;
+        c.updateSizeHints();
         return c;
     }
 
@@ -47,13 +47,13 @@ pub const Client = struct {
         return Geometry{ .pos = Pos.init(x, y), .size = Size.init(w, h) };
     }
 
-    pub fn updateSizeHints(self: *Client) !void {
+    pub fn updateSizeHints(self: *Client) void {
         self.min_size = Size.init(1, 1);
         self.max_size = Size.init(100000, 100000);
         var hints: *x11.XSizeHints = x11.XAllocSizeHints();
         defer _ = x11.XFree(hints);
         var supplied: c_long = undefined;
-        if (x11.XGetWMNormalHints(self.d, self.w, hints, &supplied) == 0) return error.XGetWMNormalHintsFailed;
+        if (x11.XGetWMNormalHints(self.d, self.w, hints, &supplied) == 0) return;
         if ((hints.flags & x11.PMinSize != 0) and hints.min_width > 0 and hints.min_height > 0) {
             self.min_size = Size.init(hints.min_width, hints.min_height);
         }
