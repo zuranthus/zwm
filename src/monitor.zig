@@ -1,5 +1,6 @@
 const std = @import("std");
 const Size = @import("vec.zig").Size;
+const Pos = @import("vec.zig").Pos;
 const Workspace = @import("workspace.zig").Workspace;
 const Client = @import("client.zig").Client;
 
@@ -7,14 +8,15 @@ pub const Monitor = struct {
     const Self = @This();
     const workspace_count: u8 = 10;
 
+    origin: Pos,
     size: Size,
     main_size: f32 = 50.0,
     workspaces: [workspace_count]Workspace = undefined,
     id: u8 = 0, // TODO: update when multi-monitor
     active_workspace_id: u8 = 1,
 
-    pub fn init(monitorSize: Size) Self {
-        var m = Self{ .size = monitorSize };
+    pub fn init(monitorOrigin: Pos, monitorSize: Size) Self {
+        var m = Self{ .origin = monitorOrigin, .size = monitorSize };
         for (m.workspaces) |*w, i| w.* = Workspace.init(@intCast(u8, i));
         return m;
     }
@@ -48,6 +50,6 @@ pub const Monitor = struct {
     }
 
     pub fn applyLayout(self: *Self, layout: anytype) void {
-        layout.apply(self.activeWorkspace().clients.items, .{ .x = 0, .y = 0 }, self.size, self.main_size / 100.0);
+        layout.apply(self.activeWorkspace().clients.items, self.origin, self.size, self.main_size / 100.0);
     }
 };

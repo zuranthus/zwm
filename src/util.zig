@@ -71,6 +71,13 @@ pub fn OwningList(comptime Type: type) type {
     };
 }
 
+pub const Struts = struct {
+    left: i32 = 0,
+    right: i32 = 0,
+    top: i32 = 0,
+    bottom: i32 = 0,
+};
+
 // Helper functions
 const assert = std.debug.assert;
 

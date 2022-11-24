@@ -6,7 +6,6 @@ const vec = @import("vec.zig");
 const Pos = vec.Pos;
 const Size = vec.Size;
 
-
 pub const Client = struct {
     const Self = @This();
 
@@ -69,14 +68,14 @@ pub const Client = struct {
 
     pub fn move(self: *Client, p: Pos) void {
         _ = x11.XMoveWindow(self.d, self.w, p.x, p.y);
-        log.trace("move {} to ({}, {})", .{self.w, p.x, p.y});
+        log.trace("move {} to ({}, {})", .{ self.w, p.x, p.y });
     }
 
     pub fn resize(self: *Client, sz: Size) void {
         const border_width = config.border.width;
         const new_size = sz.clamp(self.min_size, self.max_size).sub(Size.init(2 * border_width, 2 * border_width));
         _ = x11.XResizeWindow(self.d, self.w, new_size.w, new_size.h);
-        log.trace("resize {} to ({}, {})", .{self.w, new_size.w, new_size.h});
+        log.trace("resize {} to ({}, {})", .{ self.w, new_size.w, new_size.h });
     }
 
     pub fn moveResize(self: *Client, pos: Pos, size: Size) void {
@@ -84,6 +83,6 @@ pub const Client = struct {
         const w = @intCast(u32, std.math.clamp(size.x, self.min_size.x, self.max_size.x) - 2 * border_width);
         const h = @intCast(u32, std.math.clamp(size.y, self.min_size.y, self.max_size.y) - 2 * border_width);
         _ = x11.XMoveResizeWindow(self.d, self.w, pos.x, pos.y, w, h);
-        log.trace("move-resize {} to ({}, {}), ({}, {})", .{self.w, pos.x, pos.y, w, h});
+        log.trace("move-resize {} to ({}, {}), ({}, {})", .{ self.w, pos.x, pos.y, w, h });
     }
 };
