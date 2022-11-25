@@ -16,6 +16,7 @@ const Monitor = @import("monitor.zig").Monitor;
 pub const Manager = struct {
     const Self = @This();
     const ClientOwner = util.OwningList(Client);
+    const root_event_mask = x11.SubstructureNotifyMask | x11.SubstructureRedirectMask;
     var is_instance_alive = false;
 
     display: *x11.Display = undefined,
@@ -29,6 +30,7 @@ pub const Manager = struct {
     atoms: Atoms = undefined,
     dock_window: ?x11.Window = null,
     dock_struts: util.Struts = .{},
+    dock_visible: bool = false,
 
     pub fn deinit(self: *Self) void {
         if (!is_instance_alive) return;
@@ -80,7 +82,7 @@ pub const Manager = struct {
         // show cursor
         wa.cursor = x11.XCreateFontCursor(self.display, x11.XC_left_ptr);
         // select events
-        wa.event_mask = x11.SubstructureNotifyMask | x11.SubstructureRedirectMask;
+        wa.event_mask = root_event_mask;
         _ = x11.XChangeWindowAttributes(self.display, root, x11.CWCursor | x11.CWEventMask, &wa);
         // hotkeys
         _ = x11.XUngrabKey(self.display, x11.AnyKey, x11.AnyModifier, root);
@@ -176,6 +178,27 @@ pub const Manager = struct {
 
     pub fn killClientWindow(self: *Self, client: *Client) void {
         self.event_handler.killWindow(client.w) catch unreachable;
+    }
+
+    pub fn toggleDockWindow(self: *Self) void {
+        if (self.dock_window) |w| {
+            const root = x11.XDefaultRootWindow(self.display);
+            var swa = std.mem.zeroInit(x11.XSetWindowAttributes, .{.do_not_propagate_mask = x11.SubstructureNotifyMask});
+            _ = x11.XChangeWindowAttributes(self.display, root, x11.CWEventMask, &swa);
+
+            if (self.dock_visible) { // TODO: read state from WM_STATE instead
+                _ = x11.XUnmapWindow(self.display, w);
+                self.applyStruts(.{});
+            } else {
+                _ = x11.XMapWindow(self.display, w);
+                self.applyStruts(self.dock_struts);
+            }
+            self.dock_visible = !self.dock_visible;
+
+            swa.do_not_propagate_mask = 0;
+            swa.event_mask = root_event_mask;
+            _ = x11.XChangeWindowAttributes(self.display, root, x11.CWEventMask, &swa);
+        }
     }
 
     /// Switch focus to the active client of the active workspace of the active monitor.
@@ -355,17 +378,19 @@ pub const Manager = struct {
             };
         }
         self.dock_window = w;
-        self.applyDockStruts();
+        self.dock_visible = true;
+        self.applyStruts(self.dock_struts);
     }
 
     fn removeDockWindow(self: *Self) void {
         log.info("Removed dock window {?}", .{self.dock_window});
+        self.dock_visible = false;
         self.dock_window = null;
         self.dock_struts = .{};
-        self.applyDockStruts();
+        self.applyStruts(.{});
     }
 
-    fn applyDockStruts(self: *Self) void {
+    fn applyStruts(self: *Self, struts: util.Struts) void {
         const screen = x11.XDefaultScreen(self.display);
         const m = self.activeMonitor();
         m.origin = Pos.init(0, 0);
@@ -373,11 +398,11 @@ pub const Manager = struct {
             x11.XDisplayWidth(self.display, screen),
             x11.XDisplayHeight(self.display, screen),
         );
-        m.origin.x += self.dock_struts.left;
-        m.origin.y += self.dock_struts.top;
-        m.size.x -= self.dock_struts.left + self.dock_struts.right;
-        m.size.y -= self.dock_struts.top + self.dock_struts.bottom;
-        log.info("Applied struts {}", .{self.dock_struts});
+        m.origin.x += struts.left;
+        m.origin.y += struts.top;
+        m.size.x -= struts.left + struts.right;
+        m.size.y -= struts.top + struts.bottom;
+        log.info("Applied struts {}", .{struts});
 
         self.markLayoutDirty();
     }

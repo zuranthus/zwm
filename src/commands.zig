@@ -93,6 +93,10 @@ pub const api = struct {
     pub fn quit(m: *Manager, code: u8) void {
         m.exit_code = code;
     }
+
+    pub fn toggleBar(m: *Manager) void {
+        m.toggleDockWindow();
+    }
 };
 
 pub const MouseAction = enum { Move, Resize };
