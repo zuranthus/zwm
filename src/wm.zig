@@ -124,9 +124,11 @@ pub const Manager = struct {
 
     pub fn focusWorkspace(self: *Self, workspace_id: u8) void {
         // TODO: multi-monitor
+        if (self.activeWorkspace().id == workspace_id) return;
+
         self.activeMonitor().activateWorkspace(workspace_id);
+        self.applyLayout();
         self.updateFocus(false);
-        self.markLayoutDirty();
     }
 
     pub fn activeClient(self: *Self) ?*Client {
@@ -139,7 +141,7 @@ pub const Manager = struct {
         // TODO: revisit for multi-monitor support
         if (client.workspace_id.? != self.activeWorkspace().id) {
             self.activeMonitor().activateWorkspace(client.workspace_id.?);
-            self.markLayoutDirty();
+            self.applyLayout();
         }
         self.activeWorkspace().activateClient(client);
         self.updateFocus(false);
@@ -164,10 +166,14 @@ pub const Manager = struct {
     pub fn moveClientToWorkspace(self: *Self, client: *Client, monitor_id: u8, workspace_id: u8) void {
         std.debug.assert(monitor_id == 0); // TODO: change after implementing multi-monitor support
         if (client.monitor_id == monitor_id and client.workspace_id == workspace_id) return;
+
+        // Will need to update layout if moving to or from visible workspace
+        const need_update_layout = client.workspace_id == self.activeWorkspace().id or workspace_id == self.activeWorkspace().id;
+
         self.monitor.removeClient(client);
         self.monitor.addClient(client, workspace_id);
+        if (need_update_layout) self.applyLayout();
         self.updateFocus(false);
-        self.markLayoutDirty();
         log.trace("Moved client {} to ({}, {})", .{ client.w, monitor_id, workspace_id });
     }
 
@@ -275,8 +281,8 @@ pub const Manager = struct {
             }
         }
 
+        self.applyLayout();
         self.updateFocus(true);
-        self.markLayoutDirty();
     }
 
     fn processNewWindow(self: *Self, w: x11.Window) void {
@@ -448,15 +454,19 @@ pub const Manager = struct {
         log.trace("Apply layout", .{});
 
         self.activeMonitor().applyLayout(TileLayout);
-        // TODO: figure out a more elegant solution?
-        // TODO: BUG floating windows disappear!
         const mon_id = self.activeMonitor().id;
         const w_id = self.activeWorkspace().id;
         var it = self.clients.list.first;
         while (it) |node| : (it = node.next) {
             const c = node.data;
-            if (c.monitor_id != mon_id or c.workspace_id != w_id) {
-                node.data.move(.{ .x = -10000, .y = -10000 });
+            const visible = c.monitor_id == mon_id and c.workspace_id == w_id;
+            const state = self.getWindowState(c.w);
+            if (!visible and state == x11.NormalState) {
+                x11.hideWindow(self.display, c.w);
+                self.setWindowState(c.w, x11.IconicState);
+            } else if (visible and state != x11.NormalState) {
+                x11.unhideWindow(self.display, c.w);
+                self.setWindowState(c.w, x11.NormalState);
             }
         }
         self.layout_dirty = false;
@@ -622,10 +632,10 @@ const EventHandler = struct {
             // TODO: revisit with multi-monitor support; need to update layout for any active monitors
             const m = wm.activeMonitor();
             const need_update_layout = client.monitor_id == m.id and client.workspace_id == m.active_workspace_id;
-            if (need_update_layout) wm.markLayoutDirty();
 
             wm.activeMonitor().removeClient(client);
             wm.deleteClient(w);
+            if (need_update_layout) wm.applyLayout();
             wm.updateFocus(true);
         } else {
             log.trace("skipping non-client window", .{});
@@ -658,8 +668,8 @@ const EventHandler = struct {
         self.wm.processNewWindow(w);
         self.wm.setWindowState(w, x11.NormalState); // TODO: choose between iconic and normal based on WM_HINTS
         _ = x11.XMapWindow(self.display, w);
+        self.wm.applyLayout();
         self.wm.updateFocus(false);
-        self.wm.markLayoutDirty();
     }
 
     fn onButtonPress(self: *Self, ev: x11.XButtonEvent) !void {
