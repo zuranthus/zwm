@@ -456,7 +456,19 @@ pub const Manager = struct {
         self.activeMonitor().applyLayout(TileLayout);
         const mon_id = self.activeMonitor().id;
         const w_id = self.activeWorkspace().id;
+        // Unhide clients from active workspace first, to minimize flickering
         var it = self.clients.list.first;
+        while (it) |node| : (it = node.next) {
+            const c = node.data;
+            const visible = c.monitor_id == mon_id and c.workspace_id == w_id;
+            const state = self.getWindowState(c.w);
+            if (visible and state != x11.NormalState) {
+                x11.unhideWindow(self.display, c.w);
+                self.setWindowState(c.w, x11.NormalState);
+            }
+        }
+        // Hide all other clients
+        it = self.clients.list.first;
         while (it) |node| : (it = node.next) {
             const c = node.data;
             const visible = c.monitor_id == mon_id and c.workspace_id == w_id;
@@ -464,9 +476,6 @@ pub const Manager = struct {
             if (!visible and state == x11.NormalState) {
                 x11.hideWindow(self.display, c.w);
                 self.setWindowState(c.w, x11.IconicState);
-            } else if (visible and state != x11.NormalState) {
-                x11.unhideWindow(self.display, c.w);
-                self.setWindowState(c.w, x11.NormalState);
             }
         }
         self.layout_dirty = false;
