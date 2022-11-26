@@ -30,7 +30,6 @@ pub const Manager = struct {
     atoms: Atoms = undefined,
     dock_window: ?x11.Window = null,
     dock_struts: util.Struts = .{},
-    dock_visible: bool = false,
 
     pub fn deinit(self: *Self) void {
         if (!is_instance_alive) return;
@@ -182,23 +181,26 @@ pub const Manager = struct {
 
     pub fn toggleDockWindow(self: *Self) void {
         if (self.dock_window) |w| {
-            const root = x11.XDefaultRootWindow(self.display);
-            var swa = std.mem.zeroInit(x11.XSetWindowAttributes, .{.do_not_propagate_mask = x11.SubstructureNotifyMask});
-            _ = x11.XChangeWindowAttributes(self.display, root, x11.CWEventMask, &swa);
-
-            if (self.dock_visible) { // TODO: read state from WM_STATE instead
-                _ = x11.XUnmapWindow(self.display, w);
+            if (self.getWindowState(w) == x11.NormalState) {
+                x11.hideWindow(self.display, w);
+                self.setWindowState(w, x11.IconicState); // TODO: also set _NET_WM_STATE_HIDDEN?
                 self.applyStruts(.{});
             } else {
-                _ = x11.XMapWindow(self.display, w);
+                x11.unhideWindow(self.display, w);
+                self.setWindowState(w, x11.NormalState);
                 self.applyStruts(self.dock_struts);
             }
-            self.dock_visible = !self.dock_visible;
-
-            swa.do_not_propagate_mask = 0;
-            swa.event_mask = root_event_mask;
-            _ = x11.XChangeWindowAttributes(self.display, root, x11.CWEventMask, &swa);
         }
+    }
+
+    fn getWindowState(self: *Self, w: x11.Window) ?i32 {
+        if (x11.getWindowProperty(self.display, w, self.atoms.wm_state, self.atoms.wm_state, x11.Atom)) |state|
+            return @intCast(i32, state);
+        return null;
+    }
+
+    fn setWindowState(self: *Self, w: x11.Window, state: i32) void {
+        x11.setWindowProperty(self.display, w, self.atoms.wm_state, &[_]c_ulong{ @intCast(c_ulong, state), x11.None });
     }
 
     /// Switch focus to the active client of the active workspace of the active monitor.
@@ -247,8 +249,8 @@ pub const Manager = struct {
             if (x11.XGetTransientForHint(self.display, w, &unused_win) != 0)
                 continue;
 
-            // Only add windows that are visible
-            if (wa.map_state == x11.IsViewable) {
+            // Only add windows that are visible or in iconic state
+            if (wa.map_state == x11.IsViewable or self.getWindowState(w) == x11.IconicState) {
                 self.processNewWindow(w);
             } else {
                 log.info("Ignoring hidden {}", .{w});
@@ -265,8 +267,8 @@ pub const Manager = struct {
             if (x11.XGetTransientForHint(self.display, w, &unused_win) == 0)
                 continue;
 
-            // Only add windows that are visible
-            if (wa.map_state == x11.IsViewable) {
+            // Only add windows that are visible or in iconic state
+            if (wa.map_state == x11.IsViewable or self.getWindowState(w) == x11.IconicState) {
                 self.processNewWindow(w);
             } else {
                 log.info("Ignoring hidden transient {}", .{w});
@@ -279,13 +281,11 @@ pub const Manager = struct {
 
     fn processNewWindow(self: *Self, w: x11.Window) void {
         // dock
-        var window_type: x11.Atom = x11.None;
-        if (self.getWindowProperty(w, self.atoms.net_wm_window_type, x11.XA_ATOM, &window_type) and
-            window_type == self.atoms.net_wm_window_type_dock)
-        {
-            self.addDockWindow(w);
-            return;
-        }
+        if (x11.getWindowProperty(self.display, w, self.atoms.net_wm_window_type, x11.XA_ATOM, x11.Atom)) |window_type|
+            if (window_type == self.atoms.net_wm_window_type_dock) {
+                self.addDockWindow(w);
+                return;
+            };
 
         // ordinary client
         var wa = std.mem.zeroes(x11.XWindowAttributes);
@@ -307,9 +307,10 @@ pub const Manager = struct {
 
         var w_trans: x11.Window = undefined;
         const is_transient = x11.XGetTransientForHint(self.display, w, &w_trans) != 0;
-        var window_type: x11.Atom = x11.None;
-        const is_dialog = (self.getWindowProperty(w, self.atoms.net_wm_window_type, x11.XA_ATOM, &window_type) and
-            window_type == self.atoms.net_wm_window_type_dialog);
+        const is_dialog = if (x11.getWindowProperty(self.display, w, self.atoms.net_wm_window_type, x11.XA_ATOM, x11.Atom)) |window_type|
+            window_type == self.atoms.net_wm_window_type_dialog
+        else
+            false;
         const is_floating = is_transient or is_dialog;
 
         const new_node = self.clients.createNode();
@@ -361,30 +362,34 @@ pub const Manager = struct {
         }
 
         log.info("Adding dock window {}", .{w});
-        const C_Struts = packed struct {
-            l: c_long = 0,
-            r: c_long = 0,
-            t: c_long = 0,
-            b: c_long = 0,
+        const C_Struts = extern struct {
+            l: c_ulong = 0,
+            r: c_ulong = 0,
+            t: c_ulong = 0,
+            b: c_ulong = 0,
         };
-        var struts = C_Struts{};
+        var c_struts = x11.getWindowProperty(self.display, w, self.atoms.net_wm_strut_partial, x11.XA_CARDINAL, C_Struts);
+        if (c_struts == null)
+            c_struts = x11.getWindowProperty(self.display, w, self.atoms.net_wm_strut, x11.XA_CARDINAL, C_Struts);
+
         self.dock_struts = .{};
-        if (self.getWindowProperty(w, self.atoms.net_wm_strut_partial, x11.XA_CARDINAL, &struts)) {
+        if (c_struts) |struts|
             self.dock_struts = .{
                 .left = @intCast(i32, struts.l),
                 .right = @intCast(i32, struts.r),
                 .top = @intCast(i32, struts.t),
                 .bottom = @intCast(i32, struts.b),
             };
-        }
         self.dock_window = w;
-        self.dock_visible = true;
-        self.applyStruts(self.dock_struts);
+        if (self.getWindowState(w) == x11.NormalState) {
+            self.applyStruts(self.dock_struts);
+        } else {
+            self.applyStruts(.{});
+        }
     }
 
     fn removeDockWindow(self: *Self) void {
         log.info("Removed dock window {?}", .{self.dock_window});
-        self.dock_visible = false;
         self.dock_window = null;
         self.dock_struts = .{};
         self.applyStruts(.{});
@@ -405,33 +410,6 @@ pub const Manager = struct {
         log.info("Applied struts {}", .{struts});
 
         self.markLayoutDirty();
-    }
-
-    fn getWindowProperty(self: *Self, w: x11.Window, property: x11.Atom, property_type: x11.Atom, result: anytype) bool {
-        var actual_type: x11.Atom = undefined;
-        var actual_format: c_int = undefined;
-        var nitems: c_long = undefined;
-        var bytes_left: c_long = undefined;
-        var data: ?@TypeOf(result) = undefined;
-        if (x11.XGetWindowProperty(
-            self.display,
-            w,
-            property,
-            0,
-            @sizeOf(@TypeOf(result.*)) * 4,
-            0,
-            property_type,
-            &actual_type,
-            &actual_format,
-            @ptrCast([*c]c_ulong, &nitems),
-            @ptrCast([*c]c_ulong, &bytes_left),
-            @ptrCast([*c][*c]u8, &data),
-        ) == x11.Success and data != null) {
-            result.* = data.?.*;
-            _ = x11.XFree(data);
-            return true;
-        }
-        return false;
     }
 
     fn grabMouseButtons(self: *Self, c: *Client) void {
@@ -533,7 +511,9 @@ const ErrorHandler = struct {
 const Atoms = struct {
     wm_delete: x11.Atom,
     wm_protocols: x11.Atom,
+    wm_state: x11.Atom,
     net_supported: x11.Atom,
+    net_wm_strut: x11.Atom,
     net_wm_strut_partial: x11.Atom,
     net_wm_window_type: x11.Atom,
     net_wm_window_type_dock: x11.Atom,
@@ -543,15 +523,18 @@ const Atoms = struct {
         const atoms = Atoms{
             .wm_delete = x11.XInternAtom(d, "WM_DELETE_WINDOW", 0),
             .wm_protocols = x11.XInternAtom(d, "WM_PROTOCOLS", 0),
+            .wm_state = x11.XInternAtom(d, "WM_STATE", 0),
             .net_supported = x11.XInternAtom(d, "_NET_SUPPORTED", 0),
+            .net_wm_strut = x11.XInternAtom(d, "_NET_WM_STRUT", 0),
             .net_wm_strut_partial = x11.XInternAtom(d, "_NET_WM_STRUT_PARTIAL", 0),
             .net_wm_window_type = x11.XInternAtom(d, "_NET_WM_WINDOW_TYPE", 0),
             .net_wm_window_type_dock = x11.XInternAtom(d, "_NET_WM_WINDOW_TYPE_DOCK", 0),
             .net_wm_window_type_dialog = x11.XInternAtom(d, "_NET_WM_WINDOW_TYPE_DIALOG", 0),
         };
 
-        const supported_net_atoms = [_]c_ulong{
+        const supported_net_atoms = [_]x11.Atom{
             atoms.net_supported,
+            atoms.net_wm_strut,
             atoms.net_wm_strut_partial,
             atoms.net_wm_window_type,
             atoms.net_wm_window_type_dock,
@@ -562,7 +545,7 @@ const Atoms = struct {
             x11.XDefaultRootWindow(d),
             atoms.net_supported,
             x11.XA_ATOM,
-            @sizeOf(x11.Atom),
+            32,
             x11.PropModeReplace,
             @ptrCast([*c]const u8, &supported_net_atoms),
             supported_net_atoms.len,
@@ -646,7 +629,10 @@ const EventHandler = struct {
             wm.updateFocus(true);
         } else {
             log.trace("skipping non-client window", .{});
+            return;
         }
+
+        self.wm.setWindowState(w, x11.WithdrawnState);
     }
 
     fn onConfigureRequest(self: *Self, ev: x11.XConfigureRequestEvent) !void {
@@ -670,6 +656,7 @@ const EventHandler = struct {
         log.trace("MapRequest for {}", .{w});
 
         self.wm.processNewWindow(w);
+        self.wm.setWindowState(w, x11.NormalState); // TODO: choose between iconic and normal based on WM_HINTS
         _ = x11.XMapWindow(self.display, w);
         self.wm.updateFocus(false);
         self.wm.markLayoutDirty();

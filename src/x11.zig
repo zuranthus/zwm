@@ -1,3 +1,5 @@
+const std = @import("std");
+const log = @import("log.zig");
 const x = @cImport({
     @cInclude("X11/Xlib.h");
     @cInclude("X11/Xproto.h");
@@ -7,6 +9,77 @@ const x = @cImport({
 });
 
 pub usingnamespace x;
+
+pub fn hideWindow(d: *x.Display, w: x.Window) void {
+    const substructure_notify = SubstructureNotifyController.disable(d);
+    defer substructure_notify.enable();
+
+    _ = x.XUnmapWindow(d, w);
+}
+
+pub fn unhideWindow(d: *x.Display, w: x.Window) void {
+    const substructure_notify = SubstructureNotifyController.disable(d);
+    defer substructure_notify.enable();
+
+    _ = x.XMapWindow(d, w);
+}
+
+pub fn getWindowProperty(d: *x.Display, w: x.Window, property: x.Atom, property_type: x.Atom, comptime dataType: type) ?dataType {
+    var result: ?dataType = null;
+    var actual_type: x.Atom = undefined;
+    var actual_format: c_int = undefined;
+    var nitems: c_ulong = undefined;
+    var bytes_left: c_ulong = undefined;
+    var data_ptr: ?*dataType = null;
+    if (x.XGetWindowProperty(
+        d,
+        w,
+        property,
+        0,
+        @bitSizeOf(dataType) / @sizeOf(c_ulong),
+        0,
+        property_type,
+        &actual_type,
+        &actual_format,
+        &nitems,
+        &bytes_left,
+        @ptrCast([*]?[*]u8, &data_ptr),
+    ) == x.Success and data_ptr != null) {
+        result = data_ptr.?.*;
+        _ = x.XFree(data_ptr);
+    }
+    return result;
+}
+
+pub fn setWindowProperty(d: *x.Display, w: x.Window, property: x.Atom, data: anytype) void {
+    const num = @sizeOf(@TypeOf(data)) / @sizeOf(c_ulong);
+    _ = x.XChangeProperty(d, w, property, property, 32, x.PropModeReplace, std.mem.asBytes(data), num);
+}
+
+const SubstructureNotifyController = struct {
+    display: *x.Display,
+    event_mask: ?c_long = null,
+
+    pub fn disable(d: *x.Display) @This() {
+        var self = SubstructureNotifyController{ .display = d };
+        const root = x.XDefaultRootWindow(d);
+        var wa: x.XWindowAttributes = undefined;
+        if (x.XGetWindowAttributes(d, root, &wa) != 0) {
+            self.event_mask = wa.your_event_mask;
+            var swa = std.mem.zeroes(x.XSetWindowAttributes);
+            _ = x.XChangeWindowAttributes(d, root, x.CWEventMask, &swa);
+        }
+        return self;
+    }
+
+    pub fn enable(self: *const @This()) void {
+        if (self.event_mask) |em| {
+            const root = x.XDefaultRootWindow(self.display);
+            var swa = std.mem.zeroInit(x.XSetWindowAttributes, .{ .event_mask = em });
+            _ = x.XChangeWindowAttributes(self.display, root, x.CWEventMask, &swa);
+        }
+    }
+};
 
 const event_name = [_][]const u8{
     "KeyPress",
