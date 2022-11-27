@@ -422,10 +422,10 @@ pub const Manager = struct {
                 .bottom = @intCast(i32, struts.b),
             };
         self.dock_window = w;
-        if (self.getWindowState(w) == x11.NormalState) {
-            self.applyStruts(self.dock_struts);
-        } else {
+        if (self.getWindowState(w) == x11.IconicState) {
             self.applyStruts(.{});
+        } else {
+            self.applyStruts(self.dock_struts);
         }
     }
 
