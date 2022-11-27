@@ -76,6 +76,7 @@ pub const Manager = struct {
                 x11.XDisplayHeight(display, screen),
             ),
         );
+        x11.setWindowProperty(self.display, root, self.atoms.net_number_of_desktops, x11.XA_CARDINAL, @intCast(c_ulong, self.monitor.workspaces.len));
         self.manageExistingWindows();
         var wa = std.mem.zeroes(x11.XSetWindowAttributes);
         // show cursor
@@ -103,6 +104,15 @@ pub const Manager = struct {
                 log.err("Cannot load clients state, error {}", .{e});
             };
         }
+
+        x11.setWindowProperty(
+            self.display,
+            x11.XDefaultRootWindow(self.display),
+            self.atoms.net_current_desktop,
+            x11.XA_CARDINAL,
+            @intCast(c_ulong, self.monitor.active_workspace_id),
+        );
+
         log.info("Created and initialized wm", .{});
 
         while (self.exit_code == null) {
@@ -129,6 +139,14 @@ pub const Manager = struct {
         self.activeMonitor().activateWorkspace(workspace_id);
         self.applyLayout();
         self.updateFocus(false);
+
+        x11.setWindowProperty(
+            self.display,
+            x11.XDefaultRootWindow(self.display),
+            self.atoms.net_current_desktop,
+            x11.XA_CARDINAL,
+            @intCast(c_ulong, self.monitor.active_workspace_id),
+        );
     }
 
     pub fn activeClient(self: *Self) ?*Client {
@@ -142,6 +160,14 @@ pub const Manager = struct {
         if (client.workspace_id.? != self.activeWorkspace().id) {
             self.activeMonitor().activateWorkspace(client.workspace_id.?);
             self.applyLayout();
+
+            x11.setWindowProperty(
+                self.display,
+                x11.XDefaultRootWindow(self.display),
+                self.atoms.net_current_desktop,
+                x11.XA_CARDINAL,
+                @intCast(c_ulong, self.monitor.active_workspace_id),
+            );
         }
         self.activeWorkspace().activateClient(client);
         self.updateFocus(false);
@@ -206,7 +232,7 @@ pub const Manager = struct {
     }
 
     fn setWindowState(self: *Self, w: x11.Window, state: i32) void {
-        x11.setWindowProperty(self.display, w, self.atoms.wm_state, &[_]c_ulong{ @intCast(c_ulong, state), x11.None });
+        x11.setWindowProperty(self.display, w, self.atoms.wm_state, self.atoms.wm_state, [_]c_ulong{ @intCast(c_ulong, state), x11.None });
     }
 
     /// Switch focus to the active client of the active workspace of the active monitor.
@@ -537,6 +563,8 @@ const Atoms = struct {
     net_wm_window_type: x11.Atom,
     net_wm_window_type_dock: x11.Atom,
     net_wm_window_type_dialog: x11.Atom,
+    net_number_of_desktops: x11.Atom,
+    net_current_desktop: x11.Atom,
 
     fn init(d: *x11.Display) Atoms {
         const atoms = Atoms{
@@ -549,6 +577,8 @@ const Atoms = struct {
             .net_wm_window_type = x11.XInternAtom(d, "_NET_WM_WINDOW_TYPE", 0),
             .net_wm_window_type_dock = x11.XInternAtom(d, "_NET_WM_WINDOW_TYPE_DOCK", 0),
             .net_wm_window_type_dialog = x11.XInternAtom(d, "_NET_WM_WINDOW_TYPE_DIALOG", 0),
+            .net_number_of_desktops = x11.XInternAtom(d, "_NET_NUMBER_OF_DESKTOPS", 0),
+            .net_current_desktop = x11.XInternAtom(d, "_NET_CURRENT_DESKTOP", 0),
         };
 
         const supported_net_atoms = [_]x11.Atom{
@@ -558,6 +588,8 @@ const Atoms = struct {
             atoms.net_wm_window_type,
             atoms.net_wm_window_type_dock,
             atoms.net_wm_window_type_dialog,
+            atoms.net_number_of_desktops,
+            atoms.net_current_desktop,
         };
         _ = x11.XChangeProperty(
             d,
@@ -621,6 +653,7 @@ const EventHandler = struct {
             x11.EnterNotify => self.onEnterNotify(e.xcrossing),
             x11.KeyPress => self.onKeyPress(e.xkey),
             x11.KeyRelease => self.onKeyRelease(e.xkey),
+            x11.ClientMessage => self.onClientMessage(e.xclient),
             else => log.trace("ignored event {s}", .{ename}),
         };
     }
@@ -788,5 +821,16 @@ const EventHandler = struct {
     fn onKeyRelease(self: *Self, ev: x11.XKeyEvent) !void {
         _ = self;
         _ = ev;
+    }
+
+    fn onClientMessage(self: *Self, ev: x11.XClientMessageEvent) !void {
+        log.trace("ClientMessage type {}", .{ev.message_type});
+        if (ev.message_type == self.wm.atoms.net_current_desktop) {
+            const id = @intCast(u8, ev.data.l[0]);
+            log.trace("changing current desktop to {}", .{id});
+            self.wm.focusWorkspace(id);
+        } else {
+            log.trace("ignored ClientMessage event", .{});
+        }
     }
 };

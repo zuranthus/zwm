@@ -6,14 +6,14 @@ const Client = @import("client.zig").Client;
 
 pub const Monitor = struct {
     const Self = @This();
-    const workspace_count: u8 = 10;
+    const workspace_count: u8 = 9;
 
     origin: Pos,
     size: Size,
     main_size: f32 = 50.0,
     workspaces: [workspace_count]Workspace = undefined,
     id: u8 = 0, // TODO: update when multi-monitor
-    active_workspace_id: u8 = 1,
+    active_workspace_id: u8 = 0,
 
     pub fn init(monitorOrigin: Pos, monitorSize: Size) Self {
         var m = Self{ .origin = monitorOrigin, .size = monitorSize };
@@ -26,8 +26,7 @@ pub const Monitor = struct {
     }
 
     pub fn activateWorkspace(self: *Self, workspace_id: u8) void {
-        // TODO: allow 0?
-        std.debug.assert(1 <= workspace_id and workspace_id <= workspace_count);
+        std.debug.assert(0 <= workspace_id and workspace_id < workspace_count);
         self.active_workspace_id = workspace_id;
     }
 
