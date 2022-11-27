@@ -263,6 +263,14 @@ pub const Manager = struct {
             _ = x11.XSetInputFocus(self.display, x11.PointerRoot, x11.RevertToPointerRoot, x11.CurrentTime);
             log.info("Cleared focus", .{});
         }
+
+            x11.setWindowProperty(
+                self.display,
+                x11.XDefaultRootWindow(self.display),
+                self.atoms.net_active_window,
+                x11.XA_WINDOW,
+                if (self.focused_client) |c| c.w else x11.None,
+            );
     }
 
     fn manageExistingWindows(self: *Self) void {
@@ -566,6 +574,7 @@ const Atoms = struct {
     net_wm_window_type_dialog: x11.Atom,
     net_number_of_desktops: x11.Atom,
     net_current_desktop: x11.Atom,
+    net_active_window: x11.Atom,
 
     fn init(d: *x11.Display) Atoms {
         const atoms = Atoms{
@@ -580,6 +589,7 @@ const Atoms = struct {
             .net_wm_window_type_dialog = x11.XInternAtom(d, "_NET_WM_WINDOW_TYPE_DIALOG", 0),
             .net_number_of_desktops = x11.XInternAtom(d, "_NET_NUMBER_OF_DESKTOPS", 0),
             .net_current_desktop = x11.XInternAtom(d, "_NET_CURRENT_DESKTOP", 0),
+            .net_active_window = x11.XInternAtom(d, "_NET_ACTIVE_WINDOW", 0),
         };
 
         const supported_net_atoms = [_]x11.Atom{
@@ -591,6 +601,7 @@ const Atoms = struct {
             atoms.net_wm_window_type_dialog,
             atoms.net_number_of_desktops,
             atoms.net_current_desktop,
+            atoms.net_active_window,
         };
         _ = x11.XChangeProperty(
             d,
