@@ -264,13 +264,13 @@ pub const Manager = struct {
             log.info("Cleared focus", .{});
         }
 
-            x11.setWindowProperty(
-                self.display,
-                x11.XDefaultRootWindow(self.display),
-                self.atoms.net_active_window,
-                x11.XA_WINDOW,
-                if (self.focused_client) |c| c.w else x11.None,
-            );
+        x11.setWindowProperty(
+            self.display,
+            x11.XDefaultRootWindow(self.display),
+            self.atoms.net_active_window,
+            x11.XA_WINDOW,
+            if (self.focused_client) |c| c.w else x11.None,
+        );
     }
 
     fn manageExistingWindows(self: *Self) void {
@@ -317,7 +317,6 @@ pub const Manager = struct {
                 log.info("Ignoring hidden transient {}", .{w});
             }
         }
-
     }
 
     fn processNewWindow(self: *Self, w: x11.Window) void {
@@ -331,21 +330,34 @@ pub const Manager = struct {
         // ordinary client
         var wa = std.mem.zeroes(x11.XWindowAttributes);
         if (x11.XGetWindowAttributes(self.display, w, &wa) == 0 or wa.override_redirect != 0) return;
-        _ = self.createClient(w) catch |e| {
-            log.err("error {}", .{e});
-            return;
-        };
+        self.createClient(w);
     }
 
-    fn createClient(self: *Self, w: x11.Window) !*Client {
-        if (self.findClientByWindow(w) != null) return error.WindowAlreadyManaged;
+    fn createClient(self: *Self, w: x11.Window) void {
+        // Update WM_STATE and visibility
+        // TODO: move to MapRequest?
+        const state = self.getWindowState(w) orelse x11.WithdrawnState;
+        var new_state = x11.NormalState;
+        if (state == x11.WithdrawnState) {
+            // Window is mapped for the first time
+            // Choose its initial state according to ICCCM guidelines
+            if (@ptrCast(?*x11.XWMHints, x11.XGetWMHints(self.display, w))) |wm_hints| {
+                if (wm_hints.flags & x11.StateHint != 0 and wm_hints.initial_state == x11.IconicState)
+                    new_state = x11.IconicState;
+                _ = x11.XFree(wm_hints);
+            }
+        }
+        if (state != x11.IconicState and new_state == x11.IconicState) {
+            self.setWindowState(w, new_state);
+            x11.hideWindow(self.display, w);
+        } else if (state != x11.NormalState and new_state == x11.NormalState) {
+            self.setWindowState(w, new_state);
+            _ = x11.XMapWindow(self.display, w);
+        }
 
-        _ = x11.XSelectInput(
-            self.display,
-            w,
-            x11.EnterWindowMask,
-        );
+        if (self.findClientByWindow(w) != null) return;
 
+        // Handle window type
         var w_trans: x11.Window = undefined;
         const is_transient = x11.XGetTransientForHint(self.display, w, &w_trans) != 0;
         const is_dialog = if (x11.getWindowProperty(self.display, w, self.atoms.net_wm_window_type, x11.XA_ATOM, x11.Atom)) |window_type|
@@ -357,10 +369,16 @@ pub const Manager = struct {
         const new_node = self.clients.createNode();
         new_node.data = Client.init(w, self.display, is_floating);
         const c = &new_node.data;
-        self.grabMouseButtons(c);
-        if (is_floating)
-            _ = x11.XRaiseWindow(self.display, c.w);
 
+        // Subscribe to events
+        self.grabMouseButtons(c);
+        _ = x11.XSelectInput(
+            self.display,
+            c.w,
+            x11.EnterWindowMask,
+        );
+
+        // Add client
         var workspace_id: ?u8 = null;
         // Transient windows appear on the same workspace as their parents
         if (is_transient) {
@@ -373,7 +391,6 @@ pub const Manager = struct {
         log.trace("min_size ({}, {}), max_size ({}, {})", .{ c.min_size.x, c.min_size.y, c.max_size.x, c.max_size.y });
         if (is_transient) log.trace("window is transient", .{});
         if (is_dialog) log.trace("window is dialog", .{});
-        return c;
     }
 
     fn deleteClient(self: *Self, w: x11.Window) void {
@@ -421,12 +438,20 @@ pub const Manager = struct {
                 .top = @intCast(i32, struts.t),
                 .bottom = @intCast(i32, struts.b),
             };
-        self.dock_window = w;
-        if (self.getWindowState(w) == x11.IconicState) {
+
+        var state = self.getWindowState(w) orelse x11.WithdrawnState;
+        if (state == x11.WithdrawnState) {
+            state = x11.NormalState;
+            self.setWindowState(w, state);
+            _ = x11.XMapWindow(self.display, w);
+        }
+        if (state == x11.IconicState) {
             self.applyStruts(.{});
         } else {
             self.applyStruts(self.dock_struts);
         }
+
+        self.dock_window = w;
     }
 
     fn removeDockWindow(self: *Self) void {
@@ -720,8 +745,6 @@ const EventHandler = struct {
         log.trace("MapRequest for {}", .{w});
 
         self.wm.processNewWindow(w);
-        self.wm.setWindowState(w, x11.NormalState); // TODO: choose between iconic and normal based on WM_HINTS
-        _ = x11.XMapWindow(self.display, w);
         self.wm.applyLayout();
         self.wm.updateFocus(false);
     }
