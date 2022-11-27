@@ -105,6 +105,9 @@ pub const Manager = struct {
             };
         }
 
+        self.applyLayout();
+        self.updateFocus(true);
+
         x11.setWindowProperty(
             self.display,
             x11.XDefaultRootWindow(self.display),
@@ -307,8 +310,6 @@ pub const Manager = struct {
             }
         }
 
-        self.applyLayout();
-        self.updateFocus(true);
     }
 
     fn processNewWindow(self: *Self, w: x11.Window) void {
