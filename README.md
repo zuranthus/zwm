@@ -20,7 +20,7 @@ that is easier to hack than dwm. Both goals are work in progress :)
 - [x] Spawn process command
 - [x] Customizable config file
 - [x] Hot reloading with persisted windows state (requires a [script](#hot-reloading))
-- [ ] Status bar
+- [x] Support for external status bar, like [Polybar](https://github.com/polybar/polybar)
 - [ ] Multi-monitor support
 - [ ] Floating windows
 - [ ] Support for adding new layouts
