@@ -1,5 +1,6 @@
 const std = @import("std");
 const log = @import("log.zig");
+const atoms = @import("atoms.zig");
 const x = @cImport({
     @cInclude("X11/Xlib.h");
     @cInclude("X11/Xproto.h");
@@ -10,18 +11,37 @@ const x = @cImport({
 
 pub usingnamespace x;
 
+/// Unmaps the window and assigns WM_STATE == IconicState.
 pub fn hideWindow(d: *x.Display, w: x.Window) void {
     const substructure_notify = SubstructureNotifyController.disable(d);
     defer substructure_notify.enable();
 
     _ = x.XUnmapWindow(d, w);
+    setWindowWMState(d, w, x.IconicState); // TODO: also set _NET_WM_STATE_HIDDEN?
 }
 
+/// Maps the window and assigns WM_STATE = NormalState.
 pub fn unhideWindow(d: *x.Display, w: x.Window) void {
     const substructure_notify = SubstructureNotifyController.disable(d);
     defer substructure_notify.enable();
 
     _ = x.XMapWindow(d, w);
+    setWindowWMState(d, w, x.NormalState);
+}
+
+/// Assigns the value of WM_STATE property to wm_state.
+/// Possible values: NormalState, IconicState, WithdrawnState.
+pub fn setWindowWMState(d: *x.Display, w: x.Window, wm_state: i32) void {
+    std.debug.assert(wm_state == x.NormalState or wm_state == x.IconicState or wm_state == x.WithdrawnState);
+    setWindowProperty(d, w, atoms.wm_state, atoms.wm_state, [_]c_ulong{ @intCast(c_ulong, wm_state), x.None });
+}
+
+/// Returns the value of WM_STATE property or null if it is not set.
+/// Possible values: NormalState, IconicState, WithdrawnState.
+pub fn getWindowWMState(d: *x.Display, w: x.Window) ?i32 {
+    if (getWindowProperty(d, w, atoms.wm_state, atoms.wm_state, x.Atom)) |state|
+        return @intCast(i32, state);
+    return null;
 }
 
 pub fn getWindowProperty(d: *x.Display, w: x.Window, property: x.Atom, property_type: x.Atom, comptime dataType: type) ?dataType {

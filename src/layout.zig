@@ -40,10 +40,14 @@ pub const TileLayout = struct {
     }
 };
 
+inline fn isTileable(c: *Client) bool {
+    return !c.is_floating and !c.is_fullscreen;
+}
+
 fn countTileable(clients: []const *Client) usize {
     var count: usize = 0;
     for (clients) |c| {
-        if (!c.is_floating) count += 1;
+        if (isTileable(c)) count += 1;
     }
     return count;
 }
@@ -51,7 +55,7 @@ fn countTileable(clients: []const *Client) usize {
 fn nextTileableClient(clients: []const *Client, next_i: usize) usize {
     var i = next_i;
     while (i < clients.len) : (i += 1) {
-        if (!clients[i].is_floating) break;
+        if (isTileable(clients[i])) return i;
     }
     return i;
 }

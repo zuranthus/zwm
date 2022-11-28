@@ -5,6 +5,7 @@ const config = @import("config.zig");
 const commands = @import("commands.zig");
 const util = @import("util.zig");
 const clients_state = @import("clients_state.zig");
+const atoms = @import("atoms.zig");
 const vec = @import("vec.zig");
 const Pos = vec.Pos;
 const Size = vec.Size;
@@ -27,7 +28,6 @@ pub const Manager = struct {
     layout_dirty: bool = false,
     exit_code: ?u8 = null,
     state_file: ?[]const u8 = null,
-    atoms: Atoms = undefined,
     dock_window: ?x11.Window = null,
     dock_struts: util.Struts = .{},
 
@@ -45,7 +45,7 @@ pub const Manager = struct {
         self.monitor.deinit();
         self.event_handler.deinit();
         self.clients.deinit();
-        self.atoms.deinit(self.display);
+        atoms.deinit(self.display);
         ErrorHandler.deregister();
         _ = x11.XCloseDisplay(self.display);
         is_instance_alive = false;
@@ -63,9 +63,9 @@ pub const Manager = struct {
         }
 
         is_instance_alive = true;
-        ErrorHandler.register();
         self.display = display;
-        self.atoms = Atoms.init(self.display);
+        ErrorHandler.register();
+        atoms.init(display);
         self.clients = ClientOwner.init();
         self.event_handler = EventHandler.init(display, self);
         const screen = x11.XDefaultScreen(display);
@@ -76,7 +76,7 @@ pub const Manager = struct {
                 x11.XDisplayHeight(display, screen),
             ),
         );
-        x11.setWindowProperty(self.display, root, self.atoms.net_number_of_desktops, x11.XA_CARDINAL, @intCast(c_ulong, self.monitor.workspaces.len));
+        x11.setWindowProperty(self.display, root, atoms.net_number_of_desktops, x11.XA_CARDINAL, @intCast(c_ulong, self.monitor.workspaces.len));
         self.manageExistingWindows();
         var wa = std.mem.zeroes(x11.XSetWindowAttributes);
         // show cursor
@@ -105,16 +105,8 @@ pub const Manager = struct {
             };
         }
 
-        self.applyLayout();
-        self.updateFocus(true);
-
-        x11.setWindowProperty(
-            self.display,
-            x11.XDefaultRootWindow(self.display),
-            self.atoms.net_current_desktop,
-            x11.XA_CARDINAL,
-            @intCast(c_ulong, self.monitor.active_workspace_id),
-        );
+        // force-apply focus
+        focusWorkspace(self, self.activeWorkspace().id);
 
         log.info("Created and initialized wm", .{});
 
@@ -137,16 +129,14 @@ pub const Manager = struct {
 
     pub fn focusWorkspace(self: *Self, workspace_id: u8) void {
         // TODO: multi-monitor
-        if (self.activeWorkspace().id == workspace_id) return;
-
         self.activeMonitor().activateWorkspace(workspace_id);
         self.applyLayout();
-        self.updateFocus(false);
+        if (self.activeClient() != self.focused_client) self.updateFocus();
 
         x11.setWindowProperty(
             self.display,
             x11.XDefaultRootWindow(self.display),
-            self.atoms.net_current_desktop,
+            atoms.net_current_desktop,
             x11.XA_CARDINAL,
             @intCast(c_ulong, self.monitor.active_workspace_id),
         );
@@ -160,20 +150,13 @@ pub const Manager = struct {
     /// Also activate its monitor and workspace if they are not active.
     pub fn focusClient(self: *Self, client: *Client) void {
         // TODO: revisit for multi-monitor support
-        if (client.workspace_id.? != self.activeWorkspace().id) {
-            self.activeMonitor().activateWorkspace(client.workspace_id.?);
-            self.applyLayout();
-
-            x11.setWindowProperty(
-                self.display,
-                x11.XDefaultRootWindow(self.display),
-                self.atoms.net_current_desktop,
-                x11.XA_CARDINAL,
-                @intCast(c_ulong, self.monitor.active_workspace_id),
-            );
+        const client_workspace = &self.monitor.workspaces[client.workspace_id.?];
+        client_workspace.activateClient(client);
+        if (client_workspace.id == self.activeWorkspace().id) {
+            if (self.activeClient() != self.focused_client) self.updateFocus();
+        } else {
+            self.focusWorkspace(client_workspace.id);
         }
-        self.activeWorkspace().activateClient(client);
-        self.updateFocus(false);
     }
 
     pub fn focusNextClient(self: *Self) void {
@@ -181,7 +164,7 @@ pub const Manager = struct {
         std.debug.assert(self.focused_client != null);
         std.debug.assert(w.active_client == self.focused_client.?);
         w.activateNextClient();
-        self.updateFocus(false);
+        if (self.activeClient() != self.focused_client) self.updateFocus();
     }
 
     pub fn focusPrevClient(self: *Self) void {
@@ -189,7 +172,7 @@ pub const Manager = struct {
         std.debug.assert(self.focused_client != null);
         std.debug.assert(w.active_client == self.focused_client.?);
         w.activatePrevClient();
-        self.updateFocus(false);
+        if (self.activeClient() != self.focused_client) self.updateFocus();
     }
 
     pub fn moveClientToWorkspace(self: *Self, client: *Client, monitor_id: u8, workspace_id: u8) void {
@@ -202,7 +185,7 @@ pub const Manager = struct {
         self.monitor.removeClient(client);
         self.monitor.addClient(client, workspace_id);
         if (need_update_layout) self.applyLayout();
-        self.updateFocus(false);
+        if (self.activeClient() != self.focused_client) self.updateFocus();
         log.trace("Moved client {} to ({}, {})", .{ client.w, monitor_id, workspace_id });
     }
 
@@ -216,34 +199,42 @@ pub const Manager = struct {
 
     pub fn toggleDockWindow(self: *Self) void {
         if (self.dock_window) |w| {
-            if (self.getWindowState(w) == x11.NormalState) {
+            if (x11.getWindowWMState(self.display, w) == x11.NormalState) {
                 x11.hideWindow(self.display, w);
-                self.setWindowState(w, x11.IconicState); // TODO: also set _NET_WM_STATE_HIDDEN?
                 self.applyStruts(.{});
             } else {
                 x11.unhideWindow(self.display, w);
-                self.setWindowState(w, x11.NormalState);
                 self.applyStruts(self.dock_struts);
             }
         }
     }
 
-    fn getWindowState(self: *Self, w: x11.Window) ?i32 {
-        if (x11.getWindowProperty(self.display, w, self.atoms.wm_state, self.atoms.wm_state, x11.Atom)) |state|
-            return @intCast(i32, state);
-        return null;
-    }
-
-    fn setWindowState(self: *Self, w: x11.Window, state: i32) void {
-        x11.setWindowProperty(self.display, w, self.atoms.wm_state, self.atoms.wm_state, [_]c_ulong{ @intCast(c_ulong, state), x11.None });
+    fn setClientFullscreen(self: *Self, c: *Client, is_fullscreen: bool) void {
+        // TODO: remove border
+        c.is_fullscreen = is_fullscreen;
+        x11.setWindowProperty(
+            self.display,
+            c.w,
+            atoms.net_wm_state,
+            x11.XA_ATOM,
+            if (is_fullscreen) atoms.net_wm_state_fullscreen else 0,
+        );
+        if (c.is_fullscreen) {
+            const m = self.activeMonitor();
+            c.moveResize(m.origin, m.size);
+            self.markLayoutDirty();
+        } else {
+            if (c.is_floating) {
+                c.moveResize(Pos.init(100, 100), Size.init(200, 200)); // TODO: save old size
+            } else {
+                self.markLayoutDirty();
+            }
+        }
     }
 
     /// Switch focus to the active client of the active workspace of the active monitor.
-    /// Do nothing if client is already focused, unless forceUpdate is true.
-    fn updateFocus(self: *Self, forceUpdate: bool) void {
+    fn updateFocus(self: *Self) void {
         const client = self.activeClient();
-        if (!forceUpdate and self.focused_client == client) return;
-
         const prev_focused_client = self.focused_client;
         self.focused_client = client;
 
@@ -254,8 +245,9 @@ pub const Manager = struct {
 
         if (client) |c| {
             // update border state and grab focus
-            c.setFocusedBorder(true);
+            if (!c.is_fullscreen) c.setFocusedBorder(true);
             _ = x11.XSetInputFocus(self.display, c.w, x11.RevertToPointerRoot, x11.CurrentTime);
+            _ = x11.XRaiseWindow(self.display, c.w);
             self.grabMouseButtons(c);
             log.info("Focused client {}", .{c.w});
         } else {
@@ -267,7 +259,7 @@ pub const Manager = struct {
         x11.setWindowProperty(
             self.display,
             x11.XDefaultRootWindow(self.display),
-            self.atoms.net_active_window,
+            atoms.net_active_window,
             x11.XA_WINDOW,
             if (self.focused_client) |c| c.w else x11.None,
         );
@@ -293,7 +285,7 @@ pub const Manager = struct {
                 continue;
 
             // Only add windows that are visible or in iconic state
-            if (wa.map_state == x11.IsViewable or self.getWindowState(w) == x11.IconicState) {
+            if (wa.map_state == x11.IsViewable or x11.getWindowWMState(self.display, w) == x11.IconicState) {
                 self.processNewWindow(w);
             } else {
                 log.info("Ignoring hidden {}", .{w});
@@ -311,7 +303,7 @@ pub const Manager = struct {
                 continue;
 
             // Only add windows that are visible or in iconic state
-            if (wa.map_state == x11.IsViewable or self.getWindowState(w) == x11.IconicState) {
+            if (wa.map_state == x11.IsViewable or x11.getWindowWMState(self.display, w) == x11.IconicState) {
                 self.processNewWindow(w);
             } else {
                 log.info("Ignoring hidden transient {}", .{w});
@@ -321,8 +313,8 @@ pub const Manager = struct {
 
     fn processNewWindow(self: *Self, w: x11.Window) void {
         // dock
-        if (x11.getWindowProperty(self.display, w, self.atoms.net_wm_window_type, x11.XA_ATOM, x11.Atom)) |window_type|
-            if (window_type == self.atoms.net_wm_window_type_dock) {
+        if (x11.getWindowProperty(self.display, w, atoms.net_wm_window_type, x11.XA_ATOM, x11.Atom)) |window_type|
+            if (window_type == atoms.net_wm_window_type_dock) {
                 self.addDockWindow(w);
                 return;
             };
@@ -336,7 +328,7 @@ pub const Manager = struct {
     fn createClient(self: *Self, w: x11.Window) void {
         // Update WM_STATE and visibility
         // TODO: move to MapRequest?
-        const state = self.getWindowState(w) orelse x11.WithdrawnState;
+        const state = x11.getWindowWMState(self.display, w) orelse x11.WithdrawnState;
         var new_state = x11.NormalState;
         if (state == x11.WithdrawnState) {
             // Window is mapped for the first time
@@ -348,11 +340,9 @@ pub const Manager = struct {
             }
         }
         if (state != x11.IconicState and new_state == x11.IconicState) {
-            self.setWindowState(w, new_state);
             x11.hideWindow(self.display, w);
         } else if (state != x11.NormalState and new_state == x11.NormalState) {
-            self.setWindowState(w, new_state);
-            _ = x11.XMapWindow(self.display, w);
+            x11.unhideWindow(self.display, w);
         }
 
         if (self.findClientByWindow(w) != null) return;
@@ -360,14 +350,16 @@ pub const Manager = struct {
         // Handle window type
         var w_trans: x11.Window = undefined;
         const is_transient = x11.XGetTransientForHint(self.display, w, &w_trans) != 0;
-        const is_dialog = if (x11.getWindowProperty(self.display, w, self.atoms.net_wm_window_type, x11.XA_ATOM, x11.Atom)) |window_type|
-            window_type == self.atoms.net_wm_window_type_dialog
-        else
-            false;
+        const is_fullscreen =
+            x11.getWindowProperty(self.display, w, atoms.net_wm_state, x11.XA_ATOM, x11.Atom) ==
+            atoms.net_wm_state_fullscreen;
+        const is_dialog =
+            x11.getWindowProperty(self.display, w, atoms.net_wm_window_type, x11.XA_ATOM, x11.Atom) ==
+            atoms.net_wm_window_type_dialog;
         const is_floating = is_transient or is_dialog;
 
         const new_node = self.clients.createNode();
-        new_node.data = Client.init(w, self.display, is_floating);
+        new_node.data = Client.init(w, self.display, is_floating, is_fullscreen);
         const c = &new_node.data;
 
         // Subscribe to events
@@ -426,9 +418,9 @@ pub const Manager = struct {
             t: c_ulong = 0,
             b: c_ulong = 0,
         };
-        var c_struts = x11.getWindowProperty(self.display, w, self.atoms.net_wm_strut_partial, x11.XA_CARDINAL, C_Struts);
+        var c_struts = x11.getWindowProperty(self.display, w, atoms.net_wm_strut_partial, x11.XA_CARDINAL, C_Struts);
         if (c_struts == null)
-            c_struts = x11.getWindowProperty(self.display, w, self.atoms.net_wm_strut, x11.XA_CARDINAL, C_Struts);
+            c_struts = x11.getWindowProperty(self.display, w, atoms.net_wm_strut, x11.XA_CARDINAL, C_Struts);
 
         self.dock_struts = .{};
         if (c_struts) |struts|
@@ -439,11 +431,10 @@ pub const Manager = struct {
                 .bottom = @intCast(i32, struts.b),
             };
 
-        var state = self.getWindowState(w) orelse x11.WithdrawnState;
+        var state = x11.getWindowWMState(self.display, w) orelse x11.WithdrawnState;
         if (state == x11.WithdrawnState) {
             state = x11.NormalState;
-            self.setWindowState(w, state);
-            _ = x11.XMapWindow(self.display, w);
+            x11.unhideWindow(self.display, w);
         }
         if (state == x11.IconicState) {
             self.applyStruts(.{});
@@ -512,31 +503,27 @@ pub const Manager = struct {
 
     fn applyLayout(self: *Self) void {
         log.trace("Apply layout", .{});
-
-        self.activeMonitor().applyLayout(TileLayout);
         const mon_id = self.activeMonitor().id;
         const w_id = self.activeWorkspace().id;
-        // Unhide clients from active workspace first, to minimize flickering
+
+        // Unhide clients belonging to the active workspace first, to minimize flickering
         var it = self.clients.list.first;
         while (it) |node| : (it = node.next) {
             const c = node.data;
             const visible = c.monitor_id == mon_id and c.workspace_id == w_id;
-            const state = self.getWindowState(c.w);
-            if (visible and state != x11.NormalState) {
+            if (visible and x11.getWindowWMState(self.display, c.w) != x11.NormalState)
                 x11.unhideWindow(self.display, c.w);
-                self.setWindowState(c.w, x11.NormalState);
-            }
         }
-        // Hide all other clients
+
+        self.activeMonitor().applyLayout(TileLayout);
+
+        // Hide clients that are not on the active workspace
         it = self.clients.list.first;
         while (it) |node| : (it = node.next) {
             const c = node.data;
             const visible = c.monitor_id == mon_id and c.workspace_id == w_id;
-            const state = self.getWindowState(c.w);
-            if (!visible and state == x11.NormalState) {
+            if (!visible and x11.getWindowWMState(self.display, c.w) == x11.NormalState)
                 x11.hideWindow(self.display, c.w);
-                self.setWindowState(c.w, x11.IconicState);
-            }
         }
         self.layout_dirty = false;
 
@@ -584,67 +571,6 @@ const ErrorHandler = struct {
             error_text,
         });
         return 0;
-    }
-};
-
-const Atoms = struct {
-    wm_delete: x11.Atom,
-    wm_protocols: x11.Atom,
-    wm_state: x11.Atom,
-    net_supported: x11.Atom,
-    net_wm_strut: x11.Atom,
-    net_wm_strut_partial: x11.Atom,
-    net_wm_window_type: x11.Atom,
-    net_wm_window_type_dock: x11.Atom,
-    net_wm_window_type_dialog: x11.Atom,
-    net_number_of_desktops: x11.Atom,
-    net_current_desktop: x11.Atom,
-    net_active_window: x11.Atom,
-
-    fn init(d: *x11.Display) Atoms {
-        const atoms = Atoms{
-            .wm_delete = x11.XInternAtom(d, "WM_DELETE_WINDOW", 0),
-            .wm_protocols = x11.XInternAtom(d, "WM_PROTOCOLS", 0),
-            .wm_state = x11.XInternAtom(d, "WM_STATE", 0),
-            .net_supported = x11.XInternAtom(d, "_NET_SUPPORTED", 0),
-            .net_wm_strut = x11.XInternAtom(d, "_NET_WM_STRUT", 0),
-            .net_wm_strut_partial = x11.XInternAtom(d, "_NET_WM_STRUT_PARTIAL", 0),
-            .net_wm_window_type = x11.XInternAtom(d, "_NET_WM_WINDOW_TYPE", 0),
-            .net_wm_window_type_dock = x11.XInternAtom(d, "_NET_WM_WINDOW_TYPE_DOCK", 0),
-            .net_wm_window_type_dialog = x11.XInternAtom(d, "_NET_WM_WINDOW_TYPE_DIALOG", 0),
-            .net_number_of_desktops = x11.XInternAtom(d, "_NET_NUMBER_OF_DESKTOPS", 0),
-            .net_current_desktop = x11.XInternAtom(d, "_NET_CURRENT_DESKTOP", 0),
-            .net_active_window = x11.XInternAtom(d, "_NET_ACTIVE_WINDOW", 0),
-        };
-
-        const supported_net_atoms = [_]x11.Atom{
-            atoms.net_supported,
-            atoms.net_wm_strut,
-            atoms.net_wm_strut_partial,
-            atoms.net_wm_window_type,
-            atoms.net_wm_window_type_dock,
-            atoms.net_wm_window_type_dialog,
-            atoms.net_number_of_desktops,
-            atoms.net_current_desktop,
-            atoms.net_active_window,
-        };
-        _ = x11.XChangeProperty(
-            d,
-            x11.XDefaultRootWindow(d),
-            atoms.net_supported,
-            x11.XA_ATOM,
-            32,
-            x11.PropModeReplace,
-            @ptrCast([*c]const u8, &supported_net_atoms),
-            supported_net_atoms.len,
-        );
-
-        return atoms;
-    }
-
-    fn deinit(self: @This(), d: *x11.Display) void {
-        _ = self;
-        _ = d;
     }
 };
 
@@ -715,13 +641,16 @@ const EventHandler = struct {
             wm.activeMonitor().removeClient(client);
             wm.deleteClient(w);
             if (need_update_layout) wm.applyLayout();
-            wm.updateFocus(true);
+            wm.updateFocus();
         } else {
             log.trace("skipping non-client window", .{});
             return;
         }
 
-        self.wm.setWindowState(w, x11.WithdrawnState);
+        x11.setWindowWMState(self.display, w, x11.WithdrawnState);
+        // Remove _NET_WM_STATE when window goes into Withdrawn state (follow EWMH guidelines)
+        _ = x11.XDeleteProperty(self.display, w, atoms.net_wm_state);
+        _ = x11.XSync(self.display, 0);
     }
 
     fn onConfigureRequest(self: *Self, ev: x11.XConfigureRequestEvent) !void {
@@ -736,6 +665,15 @@ const EventHandler = struct {
             .sibling = ev.above,
             .stack_mode = ev.detail,
         };
+        if (self.wm.findClientByWindow(w)) |c| {
+            if (c.is_fullscreen) {
+                const m = self.wm.activeMonitor();
+                changes.x = m.origin.x;
+                changes.y = m.origin.y;
+                changes.width = m.size.x;
+                changes.height = m.size.y;
+            }
+        }
         _ = x11.XConfigureWindow(self.display, w, @intCast(c_uint, ev.value_mask), &changes);
         log.info("resize {} to ({}, {})", .{ w, changes.width, changes.height });
     }
@@ -746,13 +684,16 @@ const EventHandler = struct {
 
         self.wm.processNewWindow(w);
         self.wm.applyLayout();
-        self.wm.updateFocus(false);
+        if (self.wm.activeClient() != self.wm.focused_client) self.wm.updateFocus();
     }
 
     fn onButtonPress(self: *Self, ev: x11.XButtonEvent) !void {
         log.trace("ButtonPress for {}", .{ev.window});
         const client = self.wm.findClientByWindow(ev.window) orelse @panic("Window is not a client");
         if (client != self.wm.focused_client) self.wm.focusClient(client);
+
+        // Only floating clients can be moved/resized
+        if (!client.is_floating) return;
 
         const mstate = &self.mouse_state;
         mstate.action = commands.firstMatchingMouseAction(config.mouse_actions, ev.button, ev.state);
@@ -816,7 +757,7 @@ const EventHandler = struct {
     fn sendEvent(self: *Self, w: x11.Window, protocol: x11.Atom) !void {
         var event = std.mem.zeroes(x11.XEvent);
         event.type = x11.ClientMessage;
-        event.xclient.message_type = self.wm.atoms.wm_protocols;
+        event.xclient.message_type = atoms.wm_protocols;
         event.xclient.window = w;
         event.xclient.format = 32;
         event.xclient.data.l[0] = @intCast(c_long, protocol);
@@ -832,7 +773,7 @@ const EventHandler = struct {
         var supports_delete = false;
         if (count > 0) {
             for (protocols[0..@intCast(usize, count)]) |p| {
-                if (p == self.wm.atoms.wm_delete) {
+                if (p == atoms.wm_delete) {
                     supports_delete = true;
                     break;
                 }
@@ -840,7 +781,7 @@ const EventHandler = struct {
         }
         if (supports_delete) {
             log.info("Sending wm_delete to {}", .{w});
-            try self.sendEvent(w, self.wm.atoms.wm_delete);
+            try self.sendEvent(w, atoms.wm_delete);
         } else {
             log.info("Killing {}", .{w});
             _ = x11.XKillClient(self.display, w);
@@ -860,10 +801,28 @@ const EventHandler = struct {
 
     fn onClientMessage(self: *Self, ev: x11.XClientMessageEvent) !void {
         log.trace("ClientMessage type {}", .{ev.message_type});
-        if (ev.message_type == self.wm.atoms.net_current_desktop) {
+        if (ev.message_type == atoms.net_current_desktop) {
+            // Dock is requesting to change the current desktop
             const id = @intCast(u8, ev.data.l[0]);
-            log.trace("changing current desktop to {}", .{id});
-            self.wm.focusWorkspace(id);
+            if (id != self.wm.activeWorkspace().id) {
+                log.trace("changing current desktop to {}", .{id});
+                self.wm.focusWorkspace(id);
+            }
+        } else if (ev.message_type == atoms.net_wm_state) {
+            const prop = ev.data.l[1];
+            log.err("got net_wm_state message, prop = {}, fullscreen_prop = {}", .{ prop, atoms.net_wm_state_fullscreen });
+            log.err("full prop = {any}", .{ev.data.l});
+            if (prop == atoms.net_wm_state_fullscreen) {
+                log.err("got net_wm_state_fullscreen message", .{});
+                // Client wants to change its fullscreen state
+                if (self.wm.findClientByWindow(ev.window)) |c| {
+                    const net_wm_state_add = 1;
+                    const net_wm_state_toggle = 2;
+                    const action = ev.data.l[0];
+                    const is_fullscreen = (action == net_wm_state_add or (action == net_wm_state_toggle and !c.is_fullscreen));
+                    if (c.is_fullscreen != is_fullscreen) self.wm.setClientFullscreen(c, is_fullscreen);
+                }
+            }
         } else {
             log.trace("ignored ClientMessage event", .{});
         }
