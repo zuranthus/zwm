@@ -27,7 +27,6 @@ pub const key_actions = .{
     .{ mod_key | x11.ShiftMask, x11.XK_Return, api.spawn, .{"alacritty"} },
     .{ mod_key | x11.ShiftMask, x11.XK_Q, api.quit, .{42} },
 
-
     .{ mod_key, x11.XK_B, api.toggleBar, .{} },
 
     .{ mod_key, x11.XK_1, api.selectTag, .{0} },

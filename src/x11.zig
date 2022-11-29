@@ -76,6 +76,17 @@ pub fn setWindowProperty(d: *x.Display, w: x.Window, property: x.Atom, property_
     _ = x.XChangeProperty(d, w, property, property_type, 32, x.PropModeReplace, std.mem.asBytes(&data), num);
 }
 
+pub fn getAtomName(d: *x.Display, atom: x.Atom, outName: *[128]u8) bool {
+    const atom_name = x.XGetAtomName(d, atom);
+    if (atom_name) |name| {
+        std.mem.copy(u8, outName, std.mem.span(name));
+        _ = x.XFree(atom_name);
+        return true;
+    }
+    outName[0] = 0;
+    return false;
+}
+
 const SubstructureNotifyController = struct {
     display: *x.Display,
     event_mask: ?c_long = null,

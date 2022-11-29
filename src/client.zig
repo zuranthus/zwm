@@ -26,7 +26,6 @@ pub const Client = struct {
         size: Size,
     };
 
-
     pub fn init(win: x11.Window, d: *x11.Display, floating: bool, fullscreen: bool) Client {
         var c = Client{ .w = win, .d = d, .is_floating = floating, .is_fullscreen = fullscreen };
         c.setFocusedBorder(false);

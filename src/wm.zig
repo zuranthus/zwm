@@ -800,20 +800,26 @@ const EventHandler = struct {
     }
 
     fn onClientMessage(self: *Self, ev: x11.XClientMessageEvent) !void {
-        log.trace("ClientMessage type {}", .{ev.message_type});
+        var processed = false;
+        var atom_name: [128]u8 = .{0} ** 128;
+
         if (ev.message_type == atoms.net_current_desktop) {
             // Dock is requesting to change the current desktop
+            log.trace("ClientMessage _NET_CURRENT_DESKTOP", .{});
             const id = @intCast(u8, ev.data.l[0]);
             if (id != self.wm.activeWorkspace().id) {
                 log.trace("changing current desktop to {}", .{id});
                 self.wm.focusWorkspace(id);
+                processed = true;
             }
+        } else if (ev.message_type == atoms.wm_change_state) {
+            const state = ev.data.l[0];
+            log.trace("ClientMessage WM_CHANGE_STATE with state {}", .{state});
         } else if (ev.message_type == atoms.net_wm_state) {
             const prop = ev.data.l[1];
-            log.err("got net_wm_state message, prop = {}, fullscreen_prop = {}", .{ prop, atoms.net_wm_state_fullscreen });
-            log.err("full prop = {any}", .{ev.data.l});
+            _ = x11.getAtomName(self.display, @intCast(c_ulong, prop), &atom_name);
+            log.trace("ClientMessage _NET_WM_STATE with property {s} ({})", .{ atom_name, prop });
             if (prop == atoms.net_wm_state_fullscreen) {
-                log.err("got net_wm_state_fullscreen message", .{});
                 // Client wants to change its fullscreen state
                 if (self.wm.findClientByWindow(ev.window)) |c| {
                     const net_wm_state_add = 1;
@@ -821,10 +827,13 @@ const EventHandler = struct {
                     const action = ev.data.l[0];
                     const is_fullscreen = (action == net_wm_state_add or (action == net_wm_state_toggle and !c.is_fullscreen));
                     if (c.is_fullscreen != is_fullscreen) self.wm.setClientFullscreen(c, is_fullscreen);
+                    processed = true;
                 }
             }
-        } else {
-            log.trace("ignored ClientMessage event", .{});
+        }
+        if (!processed) {
+            _ = x11.getAtomName(self.display, ev.message_type, &atom_name);
+            log.trace("ignored ClientMessage {s} ({})", .{ atom_name, ev.message_type });
         }
     }
 };
