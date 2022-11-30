@@ -1,8 +1,8 @@
 const log = @import("log.zig");
 const config = @import("config.zig");
-const vec = @import("vec.zig");
-const Pos = vec.Pos;
-const Size = vec.Size;
+const util = @import("util.zig");
+const Pos = util.Pos;
+const Size = util.Size;
 const Client = @import("client.zig").Client;
 
 pub const TileLayout = struct {
@@ -17,7 +17,7 @@ pub const TileLayout = struct {
 
         if (len == 1) {
             const main_size = Size.init(size.x - 2 * gap, size.y - 2 * gap);
-            clients[i].moveResize(pos, main_size);
+            updateClient(clients[i], pos, main_size);
             return;
         }
 
@@ -25,7 +25,7 @@ pub const TileLayout = struct {
             @floatToInt(i32, @intToFloat(f32, size.x) * main_factor - @intToFloat(f32, gap) * 1.5),
             size.y - 2 * gap,
         );
-        clients[i].moveResize(pos, msize);
+        updateClient(clients[i], pos, msize);
         pos.x += msize.x + gap;
         const ssize = Size.init(
             size.x - msize.x - 3 * gap,
@@ -34,11 +34,17 @@ pub const TileLayout = struct {
         while (true) {
             i = nextTileableClient(clients, i + 1);
             if (i >= clients.len) break;
-            clients[i].moveResize(pos, ssize);
+            updateClient(clients[i], pos, ssize);
             pos.y += ssize.y + gap;
         }
     }
 };
+
+fn updateClient(c: *Client, pos: Pos, size: Size) void {
+    c.pos = pos;
+    c.size = size;
+    c.moveResize(pos, size);
+}
 
 inline fn isTileable(c: *Client) bool {
     return !c.is_floating and !c.is_fullscreen;

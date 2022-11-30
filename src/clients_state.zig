@@ -29,7 +29,7 @@ pub fn saveState(m: *Manager, state_file: []const u8) !void {
 
     // client state
     for (m.activeMonitor().workspaces) |*w| {
-        var i:usize = w.clients.items.len;
+        var i: usize = w.clients.items.len;
         while (i > 0) {
             i -= 1;
             const c = w.clients.items[i];

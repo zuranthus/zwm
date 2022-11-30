@@ -6,13 +6,12 @@ const commands = @import("commands.zig");
 const util = @import("util.zig");
 const clients_state = @import("clients_state.zig");
 const atoms = @import("atoms.zig");
-const vec = @import("vec.zig");
-const Pos = vec.Pos;
-const Size = vec.Size;
 const Client = @import("client.zig").Client;
 const TileLayout = @import("layout.zig").TileLayout;
 const Workspace = @import("workspace.zig").Workspace;
 const Monitor = @import("monitor.zig").Monitor;
+const Pos = util.Pos;
+const Size = util.Size;
 
 pub const Manager = struct {
     const Self = @This();
@@ -210,22 +209,14 @@ pub const Manager = struct {
     }
 
     fn setClientFullscreen(self: *Self, c: *Client, is_fullscreen: bool) void {
-        // TODO: remove border
-        c.is_fullscreen = is_fullscreen;
-        x11.setWindowProperty(
-            self.display,
-            c.w,
-            atoms.net_wm_state,
-            x11.XA_ATOM,
-            if (is_fullscreen) atoms.net_wm_state_fullscreen else 0,
-        );
+        c.setFullscreenState(is_fullscreen);
         if (c.is_fullscreen) {
             const m = self.activeMonitor();
             c.moveResize(m.origin, m.size);
             self.markLayoutDirty();
         } else {
             if (c.is_floating) {
-                c.moveResize(Pos.init(100, 100), Size.init(200, 200)); // TODO: save old size
+                c.moveResize(c.pos, c.size);
             } else {
                 self.markLayoutDirty();
             }
@@ -322,10 +313,56 @@ pub const Manager = struct {
         // ordinary client
         var wa = std.mem.zeroes(x11.XWindowAttributes);
         if (x11.XGetWindowAttributes(self.display, w, &wa) == 0 or wa.override_redirect != 0) return;
-        self.createClient(w);
+        self.createClient(w, &wa);
     }
 
-    fn createClient(self: *Self, w: x11.Window) void {
+    fn createClient(self: *Self, w: x11.Window, wa: *x11.XWindowAttributes) void {
+        if (self.findClientByWindow(w) == null) {
+            // Handle window type
+            var w_trans: x11.Window = undefined;
+            const is_transient = x11.XGetTransientForHint(self.display, w, &w_trans) != 0;
+            const is_fullscreen =
+                x11.getWindowProperty(self.display, w, atoms.net_wm_state, x11.XA_ATOM, x11.Atom) ==
+                atoms.net_wm_state_fullscreen;
+            const is_dialog =
+                x11.getWindowProperty(self.display, w, atoms.net_wm_window_type, x11.XA_ATOM, x11.Atom) ==
+                atoms.net_wm_window_type_dialog;
+            const is_floating = is_transient or is_dialog;
+
+            // Pos, size
+            var pos = Pos.init(wa.x, wa.y);
+            var size = Pos.init(wa.width, wa.height);
+            pos = util.clipWindowPos(self.activeMonitor().origin, self.activeMonitor().size, pos, size);
+
+            const new_node = self.clients.createNode();
+            new_node.data = Client.init(w, self.display, pos, size, is_floating);
+            const c = &new_node.data;
+
+            // Subscribe to events
+            self.grabMouseButtons(c);
+            _ = x11.XSelectInput(
+                self.display,
+                c.w,
+                x11.EnterWindowMask,
+            );
+
+            // Add client
+            var workspace_id: ?u8 = null;
+            // Transient windows appear on the same workspace as their parents
+            if (is_transient) {
+                if (self.findClientByWindow(w_trans)) |c_trans|
+                    workspace_id = c_trans.workspace_id;
+            }
+            self.activeMonitor().addClient(c, workspace_id);
+
+            if (is_fullscreen) self.setClientFullscreen(c, true);
+
+            log.info("Added client {}", .{w});
+            log.trace("min_size ({}, {}), max_size ({}, {})", .{ c.min_size.x, c.min_size.y, c.max_size.x, c.max_size.y });
+            if (is_transient) log.trace("window is transient", .{});
+            if (is_dialog) log.trace("window is dialog", .{});
+        }
+
         // Update WM_STATE and visibility
         // TODO: move to MapRequest?
         const state = x11.getWindowWMState(self.display, w) orelse x11.WithdrawnState;
@@ -334,9 +371,9 @@ pub const Manager = struct {
             // Window is mapped for the first time
             // Choose its initial state according to ICCCM guidelines
             if (@ptrCast(?*x11.XWMHints, x11.XGetWMHints(self.display, w))) |wm_hints| {
+                defer _ = x11.XFree(wm_hints);
                 if (wm_hints.flags & x11.StateHint != 0 and wm_hints.initial_state == x11.IconicState)
                     new_state = x11.IconicState;
-                _ = x11.XFree(wm_hints);
             }
         }
         if (state != x11.IconicState and new_state == x11.IconicState) {
@@ -344,45 +381,6 @@ pub const Manager = struct {
         } else if (state != x11.NormalState and new_state == x11.NormalState) {
             x11.unhideWindow(self.display, w);
         }
-
-        if (self.findClientByWindow(w) != null) return;
-
-        // Handle window type
-        var w_trans: x11.Window = undefined;
-        const is_transient = x11.XGetTransientForHint(self.display, w, &w_trans) != 0;
-        const is_fullscreen =
-            x11.getWindowProperty(self.display, w, atoms.net_wm_state, x11.XA_ATOM, x11.Atom) ==
-            atoms.net_wm_state_fullscreen;
-        const is_dialog =
-            x11.getWindowProperty(self.display, w, atoms.net_wm_window_type, x11.XA_ATOM, x11.Atom) ==
-            atoms.net_wm_window_type_dialog;
-        const is_floating = is_transient or is_dialog;
-
-        const new_node = self.clients.createNode();
-        new_node.data = Client.init(w, self.display, is_floating, is_fullscreen);
-        const c = &new_node.data;
-
-        // Subscribe to events
-        self.grabMouseButtons(c);
-        _ = x11.XSelectInput(
-            self.display,
-            c.w,
-            x11.EnterWindowMask,
-        );
-
-        // Add client
-        var workspace_id: ?u8 = null;
-        // Transient windows appear on the same workspace as their parents
-        if (is_transient) {
-            if (self.findClientByWindow(w_trans)) |c_trans|
-                workspace_id = c_trans.workspace_id;
-        }
-        self.activeMonitor().addClient(c, workspace_id);
-
-        log.info("Added client {}", .{w});
-        log.trace("min_size ({}, {}), max_size ({}, {})", .{ c.min_size.x, c.min_size.y, c.max_size.x, c.max_size.y });
-        if (is_transient) log.trace("window is transient", .{});
-        if (is_dialog) log.trace("window is dialog", .{});
     }
 
     fn deleteClient(self: *Self, w: x11.Window) void {
@@ -604,7 +602,7 @@ const EventHandler = struct {
         const ename = x11.eventTypeToString(@intCast(u8, e.type));
         try switch (e.type) {
             x11.UnmapNotify => self.onUnmapNotify(e.xunmap),
-            x11.ConfigureNotify => {},
+            x11.ConfigureNotify => self.onConfigureNotify(e.xconfigure),
             x11.ConfigureRequest => self.onConfigureRequest(e.xconfigurerequest),
             x11.MapRequest => self.onMapRequest(e.xmaprequest),
             x11.ButtonPress => self.onButtonPress(e.xbutton),
@@ -655,27 +653,25 @@ const EventHandler = struct {
 
     fn onConfigureRequest(self: *Self, ev: x11.XConfigureRequestEvent) !void {
         var w = ev.window;
-        log.trace("ConfigureRequest for {}", .{w});
-        var changes = x11.XWindowChanges{
-            .x = ev.x,
-            .y = ev.y,
-            .width = ev.width,
-            .height = ev.height,
-            .border_width = ev.border_width,
-            .sibling = ev.above,
-            .stack_mode = ev.detail,
-        };
         if (self.wm.findClientByWindow(w)) |c| {
-            if (c.is_fullscreen) {
-                const m = self.wm.activeMonitor();
-                changes.x = m.origin.x;
-                changes.y = m.origin.y;
-                changes.width = m.size.x;
-                changes.height = m.size.y;
+            log.trace("ConfigureRequest for client {}", .{w});
+            if (c.is_floating and !c.is_fullscreen) {
+                // TODO: parse wc and apply to client
+                // TODO: what to do with fullscreen?
             }
+        } else {
+            log.trace("ConfigureRequest for non-client window {}", .{w});
+            var wc = x11.XWindowChanges{
+                .x = ev.x,
+                .y = ev.y,
+                .width = ev.width,
+                .height = ev.height,
+                .border_width = ev.border_width,
+                .sibling = ev.above,
+                .stack_mode = ev.detail,
+            };
+            _ = x11.XConfigureWindow(self.display, w, @intCast(c_uint, ev.value_mask), &wc);
         }
-        _ = x11.XConfigureWindow(self.display, w, @intCast(c_uint, ev.value_mask), &changes);
-        log.info("resize {} to ({}, {})", .{ w, changes.width, changes.height });
     }
 
     fn onMapRequest(self: *Self, ev: x11.XMapRequestEvent) void {
@@ -698,10 +694,9 @@ const EventHandler = struct {
         const mstate = &self.mouse_state;
         mstate.action = commands.firstMatchingMouseAction(config.mouse_actions, ev.button, ev.state);
         if (mstate.action != null) {
-            const g = try client.getGeometry();
             mstate.start_pos = Pos.init(ev.x_root, ev.y_root);
-            mstate.frame_pos = g.pos;
-            mstate.frame_size = g.size;
+            mstate.frame_pos = client.pos;
+            mstate.frame_size = client.size;
         }
     }
 
@@ -717,7 +712,7 @@ const EventHandler = struct {
         const mstate = &self.mouse_state;
 
         const drag_pos = Pos.init(ev.x_root, ev.y_root);
-        const delta = vec.IntVec2.init(
+        const delta = util.IntVec2.init(
             drag_pos.x - mstate.start_pos.x,
             drag_pos.y - mstate.start_pos.y,
         );
@@ -797,6 +792,12 @@ const EventHandler = struct {
     fn onKeyRelease(self: *Self, ev: x11.XKeyEvent) !void {
         _ = self;
         _ = ev;
+    }
+
+    fn onConfigureNotify(self: *Self, ev: x11.XConfigureEvent) !void {
+        if (self.wm.findClientByWindow(ev.window)) |_| {
+            log.trace("ConfgureNotify for client {} ignored", .{ev.window});
+        }
     }
 
     fn onClientMessage(self: *Self, ev: x11.XClientMessageEvent) !void {

@@ -1,6 +1,7 @@
 const std = @import("std");
-const Size = @import("vec.zig").Size;
-const Pos = @import("vec.zig").Pos;
+const util = @import("util.zig");
+const Pos = util.Pos;
+const Size = util.Size;
 const Workspace = @import("workspace.zig").Workspace;
 const Client = @import("client.zig").Client;
 
