@@ -212,7 +212,7 @@ pub const Manager = struct {
         c.setFullscreenState(is_fullscreen);
         if (c.is_fullscreen) {
             const m = self.activeMonitor();
-            c.moveResize(m.origin, m.size);
+            c.moveResize(m.screen_origin, m.screen_size);
             self.markLayoutDirty();
         } else {
             if (c.is_floating) {
@@ -332,7 +332,7 @@ pub const Manager = struct {
             // Pos, size
             var pos = Pos.init(wa.x, wa.y);
             var size = Pos.init(wa.width, wa.height);
-            pos = util.clipWindowPos(self.activeMonitor().origin, self.activeMonitor().size, pos, size);
+            util.clipWindowPosSize(self.activeMonitor().origin, self.activeMonitor().size, &pos, &size);
 
             const new_node = self.clients.createNode();
             new_node.data = Client.init(w, self.display, pos, size, is_floating);
@@ -451,20 +451,9 @@ pub const Manager = struct {
     }
 
     fn applyStruts(self: *Self, struts: util.Struts) void {
-        const screen = x11.XDefaultScreen(self.display);
-        const m = self.activeMonitor();
-        m.origin = Pos.init(0, 0);
-        m.size = Size.init(
-            x11.XDisplayWidth(self.display, screen),
-            x11.XDisplayHeight(self.display, screen),
-        );
-        m.origin.x += struts.left;
-        m.origin.y += struts.top;
-        m.size.x -= struts.left + struts.right;
-        m.size.y -= struts.top + struts.bottom;
-        log.info("Applied struts {}", .{struts});
-
+        self.activeMonitor().applySruts(struts);
         self.markLayoutDirty();
+        log.info("Applied struts {}", .{struts});
     }
 
     fn grabMouseButtons(self: *Self, c: *Client) void {
@@ -689,7 +678,7 @@ const EventHandler = struct {
         if (client != self.wm.focused_client) self.wm.focusClient(client);
 
         // Only floating clients can be moved/resized
-        if (!client.is_floating) return;
+        if (!client.is_floating or client.is_fullscreen) return;
 
         const mstate = &self.mouse_state;
         mstate.action = commands.firstMatchingMouseAction(config.mouse_actions, ev.button, ev.state);
@@ -720,10 +709,11 @@ const EventHandler = struct {
         const c = self.wm.findClientByWindow(ev.window) orelse @panic("Window is not a client");
         switch (mstate.action.?) {
             commands.MouseAction.Move => {
-                const x = mstate.frame_pos.x + delta.x;
-                const y = mstate.frame_pos.y + delta.y;
-                log.info("Moving to ({}, {})", .{ x, y });
-                _ = x11.XMoveWindow(self.display, c.w, x, y);
+                var new_pos = mstate.frame_pos.addVec(delta);
+                var size = c.size;
+                util.clipWindowPosSize(self.wm.activeMonitor().origin, self.wm.activeMonitor().size, &new_pos, &size);
+                c.move(new_pos);
+                log.info("moved to ({}, {})", .{ c.pos.x, c.pos.y });
             },
             commands.MouseAction.Resize => {
                 const w = @intCast(u32, std.math.clamp(
@@ -736,9 +726,11 @@ const EventHandler = struct {
                     c.min_size.y,
                     c.max_size.y,
                 ));
-
-                log.info("Resizing to ({}, {})", .{ w, h });
-                _ = x11.XResizeWindow(self.display, ev.window, w, h);
+                var pos = c.pos;
+                var new_size = Size.init(w, h);
+                util.clipWindowPosSize(self.wm.activeMonitor().origin, self.wm.activeMonitor().size, &pos, &new_size);
+                c.resize(new_size);
+                log.info("resized to ({}, {})", .{ c.size.x, c.size.y });
             },
         }
     }
@@ -827,7 +819,8 @@ const EventHandler = struct {
                     const net_wm_state_toggle = 2;
                     const action = ev.data.l[0];
                     const is_fullscreen = (action == net_wm_state_add or (action == net_wm_state_toggle and !c.is_fullscreen));
-                    if (c.is_fullscreen != is_fullscreen) self.wm.setClientFullscreen(c, is_fullscreen);
+                    if (c.is_fullscreen != is_fullscreen)
+                        self.wm.setClientFullscreen(c, is_fullscreen);
                     processed = true;
                 }
             }

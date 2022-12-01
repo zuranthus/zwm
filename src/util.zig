@@ -9,6 +9,14 @@ pub const IntVec2 = struct {
         return IntVec2{ .x = @intCast(i32, x), .y = @intCast(i32, y) };
     }
 
+    pub fn addVec(self: IntVec2, other: IntVec2) IntVec2 {
+        return self.add(other.x, other.y);
+    }
+
+    pub fn add(self: IntVec2, x: anytype, y: anytype) IntVec2 {
+        return IntVec2{ .x = self.x + @intCast(i32, x), .y = self.y + @intCast(i32, y) };
+    }
+
     pub fn sub(self: IntVec2, x: anytype, y: anytype) IntVec2 {
         return IntVec2{ .x = self.x - @intCast(i32, x), .y = self.y - @intCast(i32, y) };
     }
@@ -20,7 +28,9 @@ pub const IntVec2 = struct {
 pub const Pos = IntVec2;
 pub const Size = IntVec2;
 
-pub fn clipWindowPos(screen_origin: Pos, screen_size: Size, pos: Pos, size: Size) Pos {
+pub fn clipWindowPosSize(screen_origin: Pos, screen_size: Size, pos: *Pos, size: *Size) void {
+    // clip window size - do nothing (for now?)
+    // clip window pos
     const mx = screen_origin.x + screen_size.x;
     const my = screen_origin.y + screen_size.y;
     var pos_out = pos;
@@ -28,7 +38,6 @@ pub fn clipWindowPos(screen_origin: Pos, screen_size: Size, pos: Pos, size: Size
     if (pos_out.y >= my) pos_out.y = my - size.y;
     if (pos_out.x + size.x <= screen_origin.x) pos_out.x = screen_origin.x;
     if (pos_out.y + size.y <= screen_origin.y) pos_out.y = screen_origin.y;
-    return pos_out;
 }
 
 pub fn findIndex(slice: anytype, value_to_find: anytype) ?usize {

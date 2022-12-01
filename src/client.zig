@@ -77,6 +77,7 @@ pub const Client = struct {
     }
 
     pub fn move(self: *Client, p: Pos) void {
+        if (!self.is_fullscreen) self.pos = p;
         _ = x11.XMoveWindow(self.d, self.w, p.x, p.y);
         log.trace("move {} to ({}, {})", .{ self.w, p.x, p.y });
     }

@@ -9,6 +9,8 @@ pub const Monitor = struct {
     const Self = @This();
     const workspace_count: u8 = 9;
 
+    screen_origin: Pos,
+    screen_size: Size,
     origin: Pos,
     size: Size,
     main_size: f32 = 50.0,
@@ -16,8 +18,13 @@ pub const Monitor = struct {
     id: u8 = 0, // TODO: update when multi-monitor
     active_workspace_id: u8 = 0,
 
-    pub fn init(monitorOrigin: Pos, monitorSize: Size) Self {
-        var m = Self{ .origin = monitorOrigin, .size = monitorSize };
+    pub fn init(monitor_origin: Pos, monitor_size: Size) Self {
+        var m = Self{
+            .screen_origin = monitor_origin,
+            .screen_size = monitor_size,
+            .origin = monitor_origin,
+            .size = monitor_size,
+        };
         for (m.workspaces) |*w, i| w.* = Workspace.init(@intCast(u8, i));
         return m;
     }
@@ -29,6 +36,13 @@ pub const Monitor = struct {
     pub fn activateWorkspace(self: *Self, workspace_id: u8) void {
         std.debug.assert(0 <= workspace_id and workspace_id < workspace_count);
         self.active_workspace_id = workspace_id;
+    }
+
+    pub fn applySruts(self: *Self, struts: util.Struts) void {
+        self.origin.x = self.screen_origin.x + struts.left;
+        self.origin.y = self.screen_origin.y + struts.top;
+        self.size.x = self.screen_size.x - (struts.left + struts.right);
+        self.size.y = self.screen_size.y - (struts.top + struts.bottom);
     }
 
     pub fn activeWorkspace(self: *Self) *Workspace {
