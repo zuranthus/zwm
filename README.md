@@ -21,12 +21,12 @@ that is easier to hack than dwm. Both goals are work in progress :)
 - [x] Customizable config file
 - [x] Hot reloading with persisted windows state (requires a [script](#hot-reloading))
 - [x] Support for external status bar, like [Polybar](https://github.com/polybar/polybar)
+- [x] Floating windows
+- [x] Fullscreen windows
 - [ ] Multi-monitor support
-- [ ] Floating windows
 - [ ] Support for adding new layouts
 - [ ] More built-in layouts: fullscreen, 3-column, ...
-- [ ] Icon tray
-- [ ] ICCCM and EWMH support
+- [ ] (partially implemented) ICCCM and EWMH support
 - [ ] Iron out issues with focus, window management, and general UX
 
 # Installation
