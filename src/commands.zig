@@ -66,7 +66,7 @@ pub const api = struct {
 
     pub fn moveNext(m: *Manager) void {
         if (m.focused_client) |client| {
-            if (!client.is_fullscreen) {
+            if (!client.is_fullscreen and !client.is_floating) {
                 const w = m.activeWorkspace();
                 std.debug.assert(w.active_client == client);
                 _ = w.swapWithNextClient(client);
@@ -77,7 +77,7 @@ pub const api = struct {
 
     pub fn movePrev(m: *Manager) void {
         if (m.focused_client) |client| {
-            if (!client.is_fullscreen) {
+            if (!client.is_fullscreen and !client.is_floating) {
                 const w = m.activeWorkspace();
                 std.debug.assert(w.active_client == client);
                 _ = w.swapWithPrevClient(client);
