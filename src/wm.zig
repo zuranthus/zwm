@@ -214,6 +214,7 @@ pub const Manager = struct {
             const m = self.activeMonitor();
             c.moveResize(m.screen_origin, m.screen_size);
             self.markLayoutDirty();
+            _ = x11.XRaiseWindow(self.display, c.w);
         } else {
             if (c.is_floating) {
                 c.moveResize(c.pos, c.size);
@@ -238,7 +239,8 @@ pub const Manager = struct {
             // update border state and grab focus
             if (!c.is_fullscreen) c.setFocusedBorder(true);
             _ = x11.XSetInputFocus(self.display, c.w, x11.RevertToPointerRoot, x11.CurrentTime);
-            _ = x11.XRaiseWindow(self.display, c.w);
+            if (c.is_floating)
+                _ = x11.XRaiseWindow(self.display, c.w);
             self.grabMouseButtons(c);
             log.info("Focused client {}", .{c.w});
         } else {
