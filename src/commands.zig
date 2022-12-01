@@ -23,15 +23,15 @@ pub const api = struct {
     }
 
     pub fn focusNext(m: *Manager) void {
-        if (m.focused_client != null) {
-            m.focusNextClient();
-        }
+        if (m.focused_client) |fc|
+            if (!fc.is_fullscreen)
+                m.focusNextClient();
     }
 
     pub fn focusPrev(m: *Manager) void {
-        if (m.focused_client != null) {
-            m.focusPrevClient();
-        }
+        if (m.focused_client) |fc|
+            if (!fc.is_fullscreen)
+                m.focusPrevClient();
     }
 
     pub fn swapMain(m: *Manager) void {
@@ -39,16 +39,18 @@ pub const api = struct {
         if (w.clients.items.len <= 1) return;
 
         if (m.focused_client) |client| {
-            std.debug.assert(w.active_client == client);
-            if (client != w.clients.items[0]) {
-                _ = w.swapWithFirstClient(client);
-            } else {
-                // focused client is already the first
-                // swap it with the next one and activate the new first
-                const new_active_client = w.swapWithNextClient(client);
-                m.focusClient(new_active_client);
+            if (!client.is_floating and !client.is_fullscreen) {
+                std.debug.assert(w.active_client == client);
+                if (client != w.clients.items[0]) {
+                    _ = w.swapWithFirstClient(client);
+                } else {
+                    // focused client is already the first
+                    // swap it with the next one and activate the new first
+                    const new_active_client = w.swapWithNextClient(client);
+                    m.focusClient(new_active_client);
+                }
+                m.markLayoutDirty();
             }
-            m.markLayoutDirty();
         }
     }
 
@@ -64,19 +66,23 @@ pub const api = struct {
 
     pub fn moveNext(m: *Manager) void {
         if (m.focused_client) |client| {
-            const w = m.activeWorkspace();
-            std.debug.assert(w.active_client == client);
-            _ = w.swapWithNextClient(client);
-            m.markLayoutDirty();
+            if (!client.is_fullscreen) {
+                const w = m.activeWorkspace();
+                std.debug.assert(w.active_client == client);
+                _ = w.swapWithNextClient(client);
+                m.markLayoutDirty();
+            }
         }
     }
 
     pub fn movePrev(m: *Manager) void {
         if (m.focused_client) |client| {
-            const w = m.activeWorkspace();
-            std.debug.assert(w.active_client == client);
-            _ = w.swapWithPrevClient(client);
-            m.markLayoutDirty();
+            if (!client.is_fullscreen) {
+                const w = m.activeWorkspace();
+                std.debug.assert(w.active_client == client);
+                _ = w.swapWithPrevClient(client);
+                m.markLayoutDirty();
+            }
         }
     }
 
