@@ -48,14 +48,22 @@ pub const Workspace = struct {
 
     pub fn swapWithNextClient(self: *Self, client: *Client) *Client {
         const i = util.findIndex(self.clients.items, client).?;
-        const nextIndex = util.nextIndex(self.clients.items, i);
+        var nextIndex = i;
+        while (true) {
+            nextIndex = util.nextIndex(self.clients.items, nextIndex);
+            if (nextIndex == i or !self.clients.items[nextIndex].is_floating) break;
+        }
         util.swap(self.clients.items, i, nextIndex);
         return self.clients.items[i];
     }
 
     pub fn swapWithPrevClient(self: *Self, client: *Client) *Client {
         const i = util.findIndex(self.clients.items, client).?;
-        const prevIndex = util.prevIndex(self.clients.items, i);
+        var prevIndex = i;
+        while (true) {
+            prevIndex = util.prevIndex(self.clients.items, prevIndex);
+            if (prevIndex == i or !self.clients.items[prevIndex].is_floating) break;
+        }
         util.swap(self.clients.items, i, prevIndex);
         return self.clients.items[i];
     }
