@@ -22,7 +22,7 @@ pub const Client = struct {
     is_focused_border: bool = false,
     base_size: Size = Size.init(0, 0),
     min_size: Size = Size.init(0, 0),
-    max_size: Size = Size.init(0, 0),
+    max_size: Size = Size.init(std.math.maxInt(i32), std.math.maxInt(i32)),
     pos: Pos,
     size: Size,
 
@@ -31,6 +31,7 @@ pub const Client = struct {
         c.setFocusedBorder(false);
         _ = x11.XSetWindowBorderWidth(c.d, c.w, c.borderWidth());
         c.updateSizeHints();
+        if (c.max_size.x != 0 and c.max_size.y != 0 and c.min_size.eq(c.max_size)) c.is_floating = true;
         c.moveResize(pos, size);
         return c;
     }

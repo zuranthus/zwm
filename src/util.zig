@@ -12,6 +12,10 @@ pub const IntVec2 = struct {
     pub fn sub(self: IntVec2, x: anytype, y: anytype) IntVec2 {
         return IntVec2{ .x = self.x - @intCast(i32, x), .y = self.y - @intCast(i32, y) };
     }
+
+    pub fn eq(self: IntVec2, other: IntVec2) bool {
+        return self.x == other.x and self.y == other.y;
+    }
 };
 pub const Pos = IntVec2;
 pub const Size = IntVec2;
