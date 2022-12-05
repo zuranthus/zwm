@@ -593,6 +593,7 @@ const EventHandler = struct {
         const ename = x11.eventTypeToString(@intCast(u8, e.type));
         try switch (e.type) {
             x11.UnmapNotify => self.onUnmapNotify(e.xunmap),
+            x11.DestroyNotify => self.onDestroyNotify(e.xdestroywindow),
             x11.ConfigureNotify => self.onConfigureNotify(e.xconfigure),
             x11.ConfigureRequest => self.onConfigureRequest(e.xconfigurerequest),
             x11.MapRequest => self.onMapRequest(e.xmaprequest),
@@ -616,17 +617,14 @@ const EventHandler = struct {
         while (x11.XCheckMaskEvent(self.display, x11.EnterWindowMask, &ev) != 0) {}
     }
 
-    fn onUnmapNotify(self: *Self, ev: x11.XUnmapEvent) !void {
-        const w = ev.window;
+    fn unmanageWindow(self: *Self, w: x11.Window) !void {
         const wm = self.wm;
-        log.trace("UnmapNotify for {}", .{w});
         if (wm.dock_window == w) {
             wm.removeDockWindow();
         } else if (wm.findClientByWindow(w)) |client| {
             // TODO: revisit with multi-monitor support; need to update layout for any active monitors
             const m = wm.activeMonitor();
             const need_update_layout = client.monitor_id == m.id and client.workspace_id == m.active_workspace_id;
-
             wm.activeMonitor().removeClient(client);
             wm.deleteClient(w);
             if (need_update_layout) wm.applyLayout();
@@ -640,6 +638,18 @@ const EventHandler = struct {
         // Remove _NET_WM_STATE when window goes into Withdrawn state (follow EWMH guidelines)
         _ = x11.XDeleteProperty(self.display, w, atoms.net_wm_state);
         _ = x11.XSync(self.display, 0);
+    }
+
+    fn onUnmapNotify(self: *Self, ev: x11.XUnmapEvent) !void {
+        const w = ev.window;
+        log.trace("UnmapNotify for {}", .{w});
+        try self.unmanageWindow(w);
+    }
+
+    fn onDestroyNotify(self: *Self, ev: x11.XDestroyWindowEvent) !void {
+        const w = ev.window;
+        log.trace("DestroyNotify for {}", .{w});
+        try self.unmanageWindow(w);
     }
 
     fn onConfigureRequest(self: *Self, ev: x11.XConfigureRequestEvent) !void {
