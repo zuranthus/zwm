@@ -653,15 +653,48 @@ const EventHandler = struct {
     }
 
     fn onConfigureRequest(self: *Self, ev: x11.XConfigureRequestEvent) !void {
-        var w = ev.window;
-        if (self.wm.findClientByWindow(w)) |c| {
-            log.trace("ConfigureRequest for client {}", .{w});
+        if (self.wm.findClientByWindow(ev.window)) |c| {
+            log.trace("ConfigureRequest for client {}", .{c.w});
+            const m = self.wm.activeMonitor();
+            const bw: i32 = if (c.is_fullscreen) 0 else config.border.width;
+            var ce = x11.XConfigureEvent{
+                .type = x11.ConfigureNotify,
+                .serial = 0,
+                .send_event = 1,
+                .display = self.display,
+                .event = c.w,
+                .window = c.w,
+                .x = if (c.is_fullscreen) m.screen_origin.x else c.pos.x,
+                .y = if (c.is_fullscreen) m.screen_origin.y else c.pos.y,
+                .width = if (c.is_fullscreen) m.screen_size.x else c.size.x - 2 * bw,
+                .height = if (c.is_fullscreen) m.screen_size.y else c.size.y - 2 * bw,
+                .border_width = bw,
+                .above = x11.None,
+                .override_redirect = 0,
+            };
+            var send_event = true;
             if (c.is_floating and !c.is_fullscreen) {
-                // TODO: parse wc and apply to client
-                // TODO: what to do with fullscreen?
+                // Only a floating client that is not in fullscreen mode can be moved or resized
+                var pos = c.pos;
+                var size = c.size;
+                if (ev.value_mask & x11.CWX != 0) pos.x = ev.x;
+                if (ev.value_mask & x11.CWY != 0) pos.y = ev.y;
+                if (ev.value_mask & x11.CWWidth != 0) size.x = ev.width + 2*bw;
+                if (ev.value_mask & x11.CWHeight != 0) size.y = ev.height + 2*bw;
+                c.moveResize(pos, size);
+                // only send the event if x or y changed, but not width, height or border width (according to ICCCM guidelines)
+                send_event = ev.value_mask & (x11.CWX | x11.CWY) != 0 and
+                    ev.value_mask & (x11.CWWidth | x11.CWHeight | x11.CWBorderWidth) == 0;
+                if (send_event) {
+                    ce.x = c.pos.x;
+                    ce.y = c.pos.y;
+                    ce.width = size.x - 2*bw;
+                    ce.height = size.y - 2*bw;
+                }
             }
+            if (send_event)
+                _ = x11.XSendEvent(self.display, c.w, 0, x11.StructureNotifyMask, @ptrCast(*x11.XEvent, &ce));
         } else {
-            log.trace("ConfigureRequest for non-client window {}", .{w});
             var wc = x11.XWindowChanges{
                 .x = ev.x,
                 .y = ev.y,
@@ -671,7 +704,8 @@ const EventHandler = struct {
                 .sibling = ev.above,
                 .stack_mode = ev.detail,
             };
-            _ = x11.XConfigureWindow(self.display, w, @intCast(c_uint, ev.value_mask), &wc);
+            const value_mask = @intCast(c_uint, ev.value_mask);
+            _ = x11.XConfigureWindow(self.display, ev.window, value_mask, &wc);
         }
     }
 
