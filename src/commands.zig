@@ -40,7 +40,6 @@ pub const api = struct {
 
         if (m.focused_client) |client| {
             if (!client.is_floating and !client.is_fullscreen) {
-                std.debug.assert(w.active_client == client);
                 if (client != w.clients.items[0]) {
                     _ = w.swapWithFirstClient(client);
                 } else {
@@ -68,7 +67,6 @@ pub const api = struct {
         if (m.focused_client) |client| {
             if (!client.is_fullscreen and !client.is_floating) {
                 const w = m.activeWorkspace();
-                std.debug.assert(w.active_client == client);
                 _ = w.swapWithNextClient(client);
                 m.markLayoutDirty();
             }
@@ -79,7 +77,6 @@ pub const api = struct {
         if (m.focused_client) |client| {
             if (!client.is_fullscreen and !client.is_floating) {
                 const w = m.activeWorkspace();
-                std.debug.assert(w.active_client == client);
                 _ = w.swapWithPrevClient(client);
                 m.markLayoutDirty();
             }

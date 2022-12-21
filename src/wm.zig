@@ -75,7 +75,13 @@ pub const Manager = struct {
                 x11.XDisplayHeight(display, screen),
             ),
         );
-        x11.setWindowProperty(self.display, root, atoms.net_number_of_desktops, x11.XA_CARDINAL, @intCast(c_ulong, self.monitor.workspaces.len));
+        x11.setWindowProperty(
+            self.display,
+            root,
+            atoms.net_number_of_desktops,
+            x11.XA_CARDINAL,
+            @intCast(c_ulong, self.monitor.workspaces.len),
+        );
         self.manageExistingWindows();
         var wa = std.mem.zeroes(x11.XSetWindowAttributes);
         // show cursor
@@ -127,64 +133,49 @@ pub const Manager = struct {
     }
 
     pub fn focusWorkspace(self: *Self, workspace_id: u8) void {
-        // TODO: multi-monitor
-        self.activeMonitor().activateWorkspace(workspace_id);
-        self.applyLayout();
-        if (self.activeClient() != self.focused_client) self.updateFocus();
-
-        x11.setWindowProperty(
-            self.display,
-            x11.XDefaultRootWindow(self.display),
-            atoms.net_current_desktop,
-            x11.XA_CARDINAL,
-            @intCast(c_ulong, self.monitor.active_workspace_id),
-        );
-    }
-
-    pub fn activeClient(self: *Self) ?*Client {
-        return self.activeWorkspace().active_client;
+        self.activateWorkspace(workspace_id);
+        self.applyFocus(self.getFirstFocusNode(workspace_id));
     }
 
     /// Activate and switch focus to client.
     /// Also activate its monitor and workspace if they are not active.
     pub fn focusClient(self: *Self, client: *Client) void {
-        // TODO: revisit for multi-monitor support
-        const client_workspace = &self.monitor.workspaces[client.workspace_id.?];
-        client_workspace.activateClient(client);
-        if (client_workspace.id == self.activeWorkspace().id) {
-            if (self.activeClient() != self.focused_client) self.updateFocus();
-        } else {
-            self.focusWorkspace(client_workspace.id);
-        }
+        if (client.workspace_id != self.activeWorkspace().id) self.activateWorkspace(client.workspace_id.?);
+        self.applyFocus(self.findNodeByWindow(client.w));
+    }
+
+    /// Switch focus to the first client in the focus stack of the active workspace.
+    pub fn updateFocus(self: *Self) void {
+        self.applyFocus(self.getFirstFocusNode(self.activeWorkspace().id));
     }
 
     pub fn focusNextClient(self: *Self) void {
-        const w = self.activeWorkspace();
         std.debug.assert(self.focused_client != null);
-        std.debug.assert(w.active_client == self.focused_client.?);
-        w.activateNextClient();
-        if (self.activeClient() != self.focused_client) self.updateFocus();
+
+        const nextClient = self.activeWorkspace().nextClient(self.focused_client.?);
+        self.applyFocus(self.findNodeByWindow(nextClient.w));
     }
 
     pub fn focusPrevClient(self: *Self) void {
-        const w = self.activeWorkspace();
         std.debug.assert(self.focused_client != null);
-        std.debug.assert(w.active_client == self.focused_client.?);
-        w.activatePrevClient();
-        if (self.activeClient() != self.focused_client) self.updateFocus();
+
+        const prevClient = self.activeWorkspace().prevClient(self.focused_client.?);
+        self.applyFocus(self.findNodeByWindow(prevClient.w));
     }
 
     pub fn moveClientToWorkspace(self: *Self, client: *Client, monitor_id: u8, workspace_id: u8) void {
         std.debug.assert(monitor_id == 0); // TODO: change after implementing multi-monitor support
         if (client.monitor_id == monitor_id and client.workspace_id == workspace_id) return;
 
-        // Will need to update layout if moving to or from visible workspace
-        const need_update_layout = client.workspace_id == self.activeWorkspace().id or workspace_id == self.activeWorkspace().id;
+        // Will need to update layout and focus if moving to or from visible workspace.
+        const visible_change = client.workspace_id == self.activeWorkspace().id or workspace_id == self.activeWorkspace().id;
 
         self.monitor.removeClient(client);
         self.monitor.addClient(client, workspace_id);
-        if (need_update_layout) self.applyLayout();
-        if (self.activeClient() != self.focused_client) self.updateFocus();
+        if (visible_change) {
+            self.applyLayout();
+            self.updateFocus();
+        }
         log.trace("Moved client {} to ({}, {})", .{ client.w, monitor_id, workspace_id });
     }
 
@@ -224,27 +215,53 @@ pub const Manager = struct {
         }
     }
 
-    /// Switch focus to the active client of the active workspace of the active monitor.
-    fn updateFocus(self: *Self) void {
-        const client = self.activeClient();
-        const prev_focused_client = self.focused_client;
-        self.focused_client = client;
+    fn getFirstFocusNode(self: *Self, workspace_id: u8) ?*ClientOwner.Node {
+        var it = self.clients.list.first;
+        while (it) |node| : (it = node.next) {
+            if (node.data.workspace_id == workspace_id) return node;
+        }
+        return null;
+    }
 
-        if (prev_focused_client) |c| {
+    fn activateWorkspace(self: *Self, workspace_id: u8) void {
+        self.activeMonitor().activateWorkspace(workspace_id);
+        self.applyLayout();
+
+        x11.setWindowProperty(
+            self.display,
+            x11.XDefaultRootWindow(self.display),
+            atoms.net_current_desktop,
+            x11.XA_CARDINAL,
+            @intCast(c_ulong, self.monitor.active_workspace_id),
+        );
+    }
+
+    // If the client node is not null,
+    //      move it to the front of the client list and switch focus to it.
+    // Otherwise, reset focus to the root window.
+    fn applyFocus(self: *Self, focusNode: ?*ClientOwner.Node) void {
+        // Return early if the focus is not changing.
+        if (focusNode) |n| if (self.focused_client == &n.data) return;
+        if (self.focused_client == null and focusNode == null) return;
+
+        // Remove focused state from the previously focused client.
+        if (self.focused_client) |c| {
             c.setFocusedBorder(false);
             self.grabMouseButtons(c);
         }
 
-        if (client) |c| {
-            // update border state and grab focus
+        if (focusNode) |n| {
+            // Set focused state on the new client, grab mouse buttons, and move it to the front of the list.
+            const c = &n.data;
             if (!c.is_fullscreen) c.setFocusedBorder(true);
             _ = x11.XSetInputFocus(self.display, c.w, x11.RevertToPointerRoot, x11.CurrentTime);
             if (c.is_floating)
                 _ = x11.XRaiseWindow(self.display, c.w);
             self.grabMouseButtons(c);
+            self.clients.moveNodeToFront(n);
             log.info("Focused client {}", .{c.w});
         } else {
-            // reset focus
+            // Reset focus to root window.
             _ = x11.XSetInputFocus(self.display, x11.PointerRoot, x11.RevertToPointerRoot, x11.CurrentTime);
             log.info("Cleared focus", .{});
         }
@@ -360,7 +377,10 @@ pub const Manager = struct {
             if (is_fullscreen) self.setClientFullscreen(c, true);
 
             log.info("Added client {}", .{w});
-            log.trace("min_size ({}, {}), max_size ({}, {})", .{ c.min_size.x, c.min_size.y, c.max_size.x, c.max_size.y });
+            log.trace(
+                "min_size ({}, {}), max_size ({}, {})",
+                .{ c.min_size.x, c.min_size.y, c.max_size.x, c.max_size.y },
+            );
             if (is_transient) log.trace("window is transient", .{});
             if (is_dialog) log.trace("window is dialog", .{});
         }
@@ -624,11 +644,13 @@ const EventHandler = struct {
         } else if (wm.findClientByWindow(w)) |client| {
             // TODO: revisit with multi-monitor support; need to update layout for any active monitors
             const m = wm.activeMonitor();
-            const need_update_layout = client.monitor_id == m.id and client.workspace_id == m.active_workspace_id;
+            const removed_active_client = client.monitor_id == m.id and client.workspace_id == m.active_workspace_id;
             wm.activeMonitor().removeClient(client);
             wm.deleteClient(w);
-            if (need_update_layout) wm.applyLayout();
-            wm.updateFocus();
+            if (removed_active_client) {
+                wm.applyLayout();
+                wm.updateFocus();
+            }
         } else {
             log.trace("skipping non-client window", .{});
             return;
@@ -679,8 +701,8 @@ const EventHandler = struct {
                 var size = c.size;
                 if (ev.value_mask & x11.CWX != 0) pos.x = ev.x;
                 if (ev.value_mask & x11.CWY != 0) pos.y = ev.y;
-                if (ev.value_mask & x11.CWWidth != 0) size.x = ev.width + 2*bw;
-                if (ev.value_mask & x11.CWHeight != 0) size.y = ev.height + 2*bw;
+                if (ev.value_mask & x11.CWWidth != 0) size.x = ev.width + 2 * bw;
+                if (ev.value_mask & x11.CWHeight != 0) size.y = ev.height + 2 * bw;
                 c.moveResize(pos, size);
                 // only send the event if x or y changed, but not width, height or border width (according to ICCCM guidelines)
                 send_event = ev.value_mask & (x11.CWX | x11.CWY) != 0 and
@@ -688,8 +710,8 @@ const EventHandler = struct {
                 if (send_event) {
                     ce.x = c.pos.x;
                     ce.y = c.pos.y;
-                    ce.width = size.x - 2*bw;
-                    ce.height = size.y - 2*bw;
+                    ce.width = size.x - 2 * bw;
+                    ce.height = size.y - 2 * bw;
                 }
             }
             if (send_event)
@@ -715,7 +737,7 @@ const EventHandler = struct {
 
         self.wm.processNewWindow(w);
         self.wm.applyLayout();
-        if (self.wm.activeClient() != self.wm.focused_client) self.wm.updateFocus();
+        self.wm.updateFocus();
     }
 
     fn onButtonPress(self: *Self, ev: x11.XButtonEvent) !void {
@@ -864,7 +886,8 @@ const EventHandler = struct {
                     const net_wm_state_add = 1;
                     const net_wm_state_toggle = 2;
                     const action = ev.data.l[0];
-                    const is_fullscreen = (action == net_wm_state_add or (action == net_wm_state_toggle and !c.is_fullscreen));
+                    const is_fullscreen = action == net_wm_state_add or
+                        (action == net_wm_state_toggle and !c.is_fullscreen);
                     if (c.is_fullscreen != is_fullscreen)
                         self.wm.setClientFullscreen(c, is_fullscreen);
                     processed = true;

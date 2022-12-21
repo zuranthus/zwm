@@ -95,6 +95,11 @@ pub fn OwningList(comptime Type: type) type {
             return newNode;
         }
 
+        pub fn moveNodeToFront(self: *Self, node: *Node) void {
+            self.list.remove(node);
+            self.list.prepend(node);
+        }
+
         pub fn destroyNode(self: *Self, node: *Node) void {
             self.list.remove(node);
             std.heap.c_allocator.destroy(node);
