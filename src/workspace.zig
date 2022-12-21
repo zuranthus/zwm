@@ -25,7 +25,6 @@ pub const Workspace = struct {
 
     pub fn nextClient(self: *Self, client: *Client) *Client {
         std.debug.assert(self.clients.items.len > 0);
-        std.debug.assert(util.contains(self.clients.items, client));
 
         const i = util.findIndex(self.clients.items, client).?;
         const nextIndex = util.nextIndex(self.clients.items, i);
@@ -34,40 +33,49 @@ pub const Workspace = struct {
 
     pub fn prevClient(self: *Self, client: *Client) *Client {
         std.debug.assert(self.clients.items.len > 0);
-        std.debug.assert(util.contains(self.clients.items, client));
 
         const i = util.findIndex(self.clients.items, client).?;
         const prevIndex = util.prevIndex(self.clients.items, i);
         return self.clients.items[prevIndex];
     }
 
-    pub fn swapWithNextClient(self: *Self, client: *Client) *Client {
-        const i = util.findIndex(self.clients.items, client).?;
-        var nextIndex = i;
-        while (true) {
-            nextIndex = util.nextIndex(self.clients.items, nextIndex);
-            if (nextIndex == i or !self.clients.items[nextIndex].is_floating) break;
+    pub fn firstTileableClient(self: *Self) ?*Client {
+        var i: usize = 0;
+        while (i < self.clients.items.len) : (i += 1) {
+            if (!self.clients.items[i].is_floating) return self.clients.items[i];
         }
-        util.swap(self.clients.items, i, nextIndex);
+        return null;
+    }
+
+    pub fn nextTileableClient(self: *Self, client: *Client) *Client {
+        std.debug.assert(self.clients.items.len > 0);
+        std.debug.assert(!client.is_floating);
+
+        var i = util.findIndex(self.clients.items, client).?;
+        while (true) {
+            i = util.nextIndex(self.clients.items, i);
+            if (!self.clients.items[i].is_floating) break;
+        }
         return self.clients.items[i];
     }
 
-    pub fn swapWithPrevClient(self: *Self, client: *Client) *Client {
-        const i = util.findIndex(self.clients.items, client).?;
-        var prevIndex = i;
+    pub fn prevTileableClient(self: *Self, client: *Client) *Client {
+        std.debug.assert(self.clients.items.len > 0);
+        std.debug.assert(!client.is_floating);
+
+        var i = util.findIndex(self.clients.items, client).?;
         while (true) {
-            prevIndex = util.prevIndex(self.clients.items, prevIndex);
-            if (prevIndex == i or !self.clients.items[prevIndex].is_floating) break;
+            i = util.prevIndex(self.clients.items, i);
+            if (!self.clients.items[i].is_floating) break;
         }
-        util.swap(self.clients.items, i, prevIndex);
         return self.clients.items[i];
     }
 
-    pub fn swapWithFirstClient(self: *Self, client: *Client) *Client {
-        const i = util.findIndex(self.clients.items, client).?;
-        // TODO: replace 0 with the index of the first non-floating client
-        util.swap(self.clients.items, i, 0);
-        return self.clients.items[i];
+    pub fn swapClients(self: *Self, client1: *Client, client2: *Client) void {
+        std.debug.assert(self.clients.items.len > 0);
+        const index1 = util.findIndex(self.clients.items, client1).?;
+        const index2 = util.findIndex(self.clients.items, client2).?;
+        util.swap(self.clients.items, index1, index2);
     }
 
     pub fn removeClient(self: *Self, client: *Client) bool {

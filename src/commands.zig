@@ -23,15 +23,21 @@ pub const api = struct {
     }
 
     pub fn focusNext(m: *Manager) void {
-        if (m.focused_client) |fc|
-            if (!fc.is_fullscreen)
-                m.focusNextClient();
+        if (m.focused_client) |fc| {
+            if (!fc.is_fullscreen) {
+                const nextClient = m.activeWorkspace().nextClient(fc);
+                m.focusClient(nextClient);
+            }
+        }
     }
 
     pub fn focusPrev(m: *Manager) void {
-        if (m.focused_client) |fc|
-            if (!fc.is_fullscreen)
-                m.focusPrevClient();
+        if (m.focused_client) |fc| {
+            if (!fc.is_fullscreen) {
+                const prevClient = m.activeWorkspace().prevClient(fc);
+                m.focusClient(prevClient);
+            }
+        }
     }
 
     pub fn swapMain(m: *Manager) void {
@@ -39,16 +45,22 @@ pub const api = struct {
         if (w.clients.items.len <= 1) return;
 
         if (m.focused_client) |client| {
-            if (!client.is_floating and !client.is_fullscreen) {
-                if (client != w.clients.items[0]) {
-                    _ = w.swapWithFirstClient(client);
-                } else {
-                    // focused client is already the first
-                    // swap it with the next one and activate the new first
-                    const new_active_client = w.swapWithNextClient(client);
-                    m.focusClient(new_active_client);
-                }
+            if (client.is_floating or client.is_fullscreen) {
+                return;
+            }
+            const first_client = w.firstTileableClient().?;
+            if (client != first_client) {
+                w.swapClients(client, first_client);
                 m.markLayoutDirty();
+            } else {
+                // focused client is already the first
+                // swap it with the next one and activate the new first
+                const next_client = w.nextTileableClient(client);
+                if (client != next_client) {
+                    w.swapClients(client, next_client);
+                    m.focusClient(next_client);
+                    m.markLayoutDirty();
+                }
             }
         }
     }
@@ -67,8 +79,11 @@ pub const api = struct {
         if (m.focused_client) |client| {
             if (!client.is_fullscreen and !client.is_floating) {
                 const w = m.activeWorkspace();
-                _ = w.swapWithNextClient(client);
-                m.markLayoutDirty();
+                const next_client = w.nextClient(client);
+                if (client != next_client) {
+                    w.swapClients(client, next_client);
+                    m.markLayoutDirty();
+                }
             }
         }
     }
@@ -77,8 +92,11 @@ pub const api = struct {
         if (m.focused_client) |client| {
             if (!client.is_fullscreen and !client.is_floating) {
                 const w = m.activeWorkspace();
-                _ = w.swapWithPrevClient(client);
-                m.markLayoutDirty();
+                const prev_client = w.prevClient(client);
+                if (client != prev_client) {
+                    w.swapClients(client, prev_client);
+                    m.markLayoutDirty();
+                }
             }
         }
     }

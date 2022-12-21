@@ -154,20 +154,6 @@ pub const Manager = struct {
         self.applyFocus(self.getFirstFocusNode(self.activeWorkspace().id));
     }
 
-    pub fn focusNextClient(self: *Self) void {
-        std.debug.assert(self.focused_client != null);
-
-        const nextClient = self.activeWorkspace().nextClient(self.focused_client.?);
-        self.applyFocus(self.findNodeByWindow(nextClient.w));
-    }
-
-    pub fn focusPrevClient(self: *Self) void {
-        std.debug.assert(self.focused_client != null);
-
-        const prevClient = self.activeWorkspace().prevClient(self.focused_client.?);
-        self.applyFocus(self.findNodeByWindow(prevClient.w));
-    }
-
     pub fn moveClientToWorkspace(self: *Self, client: *Client, monitor_id: u8, workspace_id: u8) void {
         std.debug.assert(monitor_id == 0); // TODO: change after implementing multi-monitor support
         if (client.monitor_id == monitor_id and client.workspace_id == workspace_id) return;
@@ -652,10 +638,10 @@ const EventHandler = struct {
         } else if (wm.findClientByWindow(w)) |client| {
             // TODO: revisit with multi-monitor support; need to update layout for any active monitors
             const m = wm.activeMonitor();
-            const removed_active_client = client.monitor_id == m.id and client.workspace_id == m.active_workspace_id;
+            const removed_visible_client = client.monitor_id == m.id and client.workspace_id == m.active_workspace_id;
             wm.activeMonitor().removeClient(client);
             wm.deleteClient(w);
-            if (removed_active_client) {
+            if (removed_visible_client) {
                 wm.applyLayout();
                 wm.updateFocus();
             }
