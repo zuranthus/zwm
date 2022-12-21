@@ -13,6 +13,11 @@ const Monitor = @import("monitor.zig").Monitor;
 const Pos = util.Pos;
 const Size = util.Size;
 
+const ClientFocus = enum {
+    Focused,
+    Unfocused,
+};
+
 pub const Manager = struct {
     const Self = @This();
     const ClientOwner = util.OwningList(Client);
@@ -247,7 +252,7 @@ pub const Manager = struct {
         // Remove focused state from the previously focused client.
         if (self.focused_client) |c| {
             c.setFocusedBorder(false);
-            self.grabMouseButtons(c);
+            self.grabMouseButtons(c, ClientFocus.Unfocused);
         }
 
         if (focusNode) |n| {
@@ -257,12 +262,14 @@ pub const Manager = struct {
             _ = x11.XSetInputFocus(self.display, c.w, x11.RevertToPointerRoot, x11.CurrentTime);
             if (c.is_floating)
                 _ = x11.XRaiseWindow(self.display, c.w);
-            self.grabMouseButtons(c);
+            self.grabMouseButtons(c, ClientFocus.Focused);
             self.clients.moveNodeToFront(n);
+            self.focused_client = c;
             log.info("Focused client {}", .{c.w});
         } else {
             // Reset focus to root window.
             _ = x11.XSetInputFocus(self.display, x11.PointerRoot, x11.RevertToPointerRoot, x11.CurrentTime);
+            self.focused_client = null;
             log.info("Cleared focus", .{});
         }
 
@@ -358,7 +365,7 @@ pub const Manager = struct {
             const c = &new_node.data;
 
             // Subscribe to events
-            self.grabMouseButtons(c);
+            self.grabMouseButtons(c, ClientFocus.Unfocused);
             _ = x11.XSelectInput(
                 self.display,
                 c.w,
@@ -478,9 +485,10 @@ pub const Manager = struct {
         log.info("Applied struts {}", .{struts});
     }
 
-    fn grabMouseButtons(self: *Self, c: *Client) void {
+    // Instead of comparing with the focused client, receive focused state as an argument
+    fn grabMouseButtons(self: *Self, c: *Client, client_focus: ClientFocus) void {
         _ = x11.XUngrabButton(self.display, x11.AnyButton, x11.AnyModifier, c.w);
-        if (c != self.focused_client) {
+        if (client_focus == .Unfocused) {
             // Focus unfocused clients on mouse button down event
             _ = x11.XGrabButton(
                 self.display,
