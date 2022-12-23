@@ -101,12 +101,21 @@ pub const api = struct {
         }
     }
 
-    pub fn spawn(m: *Manager, exec_name: [*c]const u8) void {
+    pub fn spawn(m: *Manager, args: anytype) void {
+        var arena_allocator = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+        defer arena_allocator.deinit();
+        const arena = arena_allocator.allocator();
+
+        const args_buf = arena.allocSentinel(?[*:0]u8, args.len, null) catch unreachable;
+        inline for (args) |arg, i| {
+            args_buf[i] = (arena.dupeZ(u8, arg) catch unreachable).ptr;
+        }
+
         const pid = std.os.fork() catch unreachable;
         if (pid == 0) {
             _ = c_import.close(x11.XConnectionNumber(m.display));
             _ = c_import.setsid();
-            _ = c_import.execvp(exec_name, null);
+            std.os.execvpeZ(args_buf[0].?, args_buf, std.c.environ) catch unreachable;
             std.os.exit(0);
         }
     }

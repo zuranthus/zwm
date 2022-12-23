@@ -24,10 +24,12 @@ pub const key_actions = .{
     .{ mod_key, x11.XK_Return, api.swapMain, .{} },
 
     .{ mod_key | x11.ShiftMask, x11.XK_C, api.killFocused, .{} },
-    .{ mod_key | x11.ShiftMask, x11.XK_Return, api.spawn, .{"alacritty"} },
     .{ mod_key | x11.ShiftMask, x11.XK_Q, api.quit, .{42} },
 
     .{ mod_key, x11.XK_B, api.toggleBar, .{} },
+
+    .{ mod_key | x11.ShiftMask, x11.XK_Return, api.spawn, .{.{"wezterm"}} },
+    .{ mod_key, x11.XK_R, api.spawn, .{.{ "rofi", "-show", "run" }} },
 
     .{ mod_key, x11.XK_1, api.selectTag, .{0} },
     .{ mod_key, x11.XK_2, api.selectTag, .{1} },
