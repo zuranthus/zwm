@@ -17,12 +17,27 @@ pub const IntVec2 = struct {
         return IntVec2{ .x = self.x + @intCast(i32, x), .y = self.y + @intCast(i32, y) };
     }
 
+    pub fn subVec(self: IntVec2, other: IntVec2) IntVec2 {
+        return self.sub(other.x, other.y);
+    }
+
     pub fn sub(self: IntVec2, x: anytype, y: anytype) IntVec2 {
         return IntVec2{ .x = self.x - @intCast(i32, x), .y = self.y - @intCast(i32, y) };
     }
 
     pub fn eq(self: IntVec2, other: IntVec2) bool {
         return self.x == other.x and self.y == other.y;
+    }
+
+    pub fn clamp(self: IntVec2, min: IntVec2, max: IntVec2) IntVec2 {
+        return IntVec2{
+            .x = std.math.clamp(self.x, min.x, max.x),
+            .y = std.math.clamp(self.y, min.y, max.y),
+        };
+    }
+
+    pub fn lessThan(self: IntVec2, other: IntVec2) bool {
+        return self.x < other.x and self.y < other.y;
     }
 };
 pub const Pos = IntVec2;

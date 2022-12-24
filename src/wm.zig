@@ -344,6 +344,7 @@ pub const Manager = struct {
             // Pos, size
             var pos = Pos.init(wa.x, wa.y);
             var size = Pos.init(wa.width, wa.height);
+            log.trace("Window Attribtues: x={}, y={}, width={}, height={}", .{wa.x, wa.y, wa.width, wa.height});
             util.clipWindowPosSize(self.activeMonitor().origin, self.activeMonitor().size, &pos, &size);
 
             const new_node = self.clients.createNode();
@@ -369,13 +370,14 @@ pub const Manager = struct {
 
             if (is_fullscreen) self.setClientFullscreen(c, true);
 
-            log.info("Added client {}", .{w});
-            log.trace(
-                "min_size ({}, {}), max_size ({}, {})",
-                .{ c.min_size.x, c.min_size.y, c.max_size.x, c.max_size.y },
-            );
-            if (is_transient) log.trace("window is transient", .{});
-            if (is_dialog) log.trace("window is dialog", .{});
+            log.info("Added client {} with pos={}, size={}, is_floating={}, is_transient={}, is_dialog={}", .{
+                w,
+                pos,
+                size,
+                is_floating,
+                is_transient,
+                is_dialog,
+            });
         }
 
         // Update WM_STATE and visibility

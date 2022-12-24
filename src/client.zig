@@ -21,18 +21,26 @@ pub const Client = struct {
     is_fullscreen: bool = false,
     is_focused_border: bool = false,
     base_size: Size = Size.init(0, 0),
-    min_size: Size = Size.init(0, 0),
+    min_size: Size = Size.init(1, 1),
     max_size: Size = Size.init(std.math.maxInt(i32), std.math.maxInt(i32)),
-    pos: Pos,
-    size: Size,
+    pos: Pos = Pos.init(0, 0),
+    size: Size = Size.init(0, 0),
 
-    pub fn init(win: x11.Window, d: *x11.Display, pos: Pos, size: Size, floating: bool) Client {
-        var c = Client{ .w = win, .d = d, .pos = pos, .size = size, .is_floating = floating };
+    pub fn init(win: x11.Window, d: *x11.Display, pos: Pos, inner_size: Size, floating: bool) Client {
+        var c = Client{ .w = win, .d = d };
+        c.updateSizeHints();
+        c.is_floating = floating or (c.max_size.x != 0 and c.max_size.y != 0 and c.min_size.eq(c.max_size));
+
+        log.trace("Init client: {} pos={}, inner_size={}, floating={}", .{
+            c.w,
+            pos,
+            inner_size,
+            c.is_floating,
+        });
+
         c.setFocusedBorder(false);
         _ = x11.XSetWindowBorderWidth(c.d, c.w, c.borderWidth());
-        c.updateSizeHints();
-        if (c.max_size.x != 0 and c.max_size.y != 0 and c.min_size.eq(c.max_size)) c.is_floating = true;
-        c.moveResize(pos, size);
+        c.moveResize(pos, inner_size.add(2 * c.borderWidth(), 2 * c.borderWidth()));
         return c;
     }
 
@@ -66,6 +74,17 @@ pub const Client = struct {
             } else {
                 self.base_size = self.min_size;
             }
+            // Ensure that max_size >= min_size
+            if (self.max_size.lessThan(self.min_size)) {
+                self.max_size = self.min_size;
+            }
+
+            log.trace("size hints for {}: min_size={}, max_size={}, base_size={}", .{
+                self.w,
+                self.min_size,
+                self.max_size,
+                self.base_size,
+            });
         }
     }
 
@@ -88,10 +107,8 @@ pub const Client = struct {
             // Apply size constraints and store size only if the client is not fullscreen.
             // Fullscreen clients just change the size directly.
             if (self.is_floating) {
-                final_size = Size.init(
-                    std.math.clamp(final_size.x, self.min_size.x, self.max_size.x),
-                    std.math.clamp(final_size.y, self.min_size.y, self.max_size.y),
-                );
+                const border_size = Size.init(2 * self.borderWidth(), 2 * self.borderWidth());
+                final_size = final_size.subVec(border_size).clamp(self.min_size, self.max_size).addVec(border_size);
             }
             self.size = final_size;
         }
