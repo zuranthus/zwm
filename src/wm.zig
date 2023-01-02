@@ -21,7 +21,7 @@ const ClientFocus = enum {
 pub const Manager = struct {
     const Self = @This();
     const ClientOwner = util.OwningList(Client);
-    const root_event_mask = x11.SubstructureNotifyMask | x11.SubstructureRedirectMask;
+    const root_event_mask = x11.SubstructureNotifyMask | x11.SubstructureRedirectMask | x11.StructureNotifyMask;
     var is_instance_alive = false;
 
     display: *x11.Display = undefined,
@@ -468,6 +468,13 @@ pub const Manager = struct {
         log.info("Applied struts {}", .{struts});
     }
 
+    fn setMonitorSize(self: *Self, size: Size) void {
+        self.activeMonitor().screen_size = size;
+        self.applyDockStruts();
+        self.applyLayout();
+        log.info("Set monitor size to {}", .{size});
+    }
+
     // Instead of comparing with the focused client, receive focused state as an argument
     fn grabMouseButtons(self: *Self, c: *Client, client_focus: ClientFocus) void {
         _ = x11.XUngrabButton(self.display, x11.AnyButton, x11.AnyModifier, c.w);
@@ -846,7 +853,11 @@ const EventHandler = struct {
     }
 
     fn onConfigureNotify(self: *Self, ev: x11.XConfigureEvent) !void {
-        if (self.wm.findClientByWindow(ev.window)) |_| {
+        const root = x11.XDefaultRootWindow(self.display);
+        if (root == ev.window) {
+            self.wm.setMonitorSize(Size.init(ev.width, ev.height));
+            log.info("ConfigureNotify for root window, new size: ({}, {})", .{ev.width, ev.height});
+        } else if (self.wm.findClientByWindow(ev.window)) |_| {
             log.trace("ConfgureNotify for client {} ignored", .{ev.window});
         }
     }
