@@ -182,11 +182,10 @@ pub const Manager = struct {
         if (self.dock_window) |w| {
             if (x11.getWindowWMState(self.display, w) == x11.NormalState) {
                 x11.hideWindow(self.display, w);
-                self.applyStruts(.{});
             } else {
                 x11.unhideWindow(self.display, w);
-                self.applyStruts(self.dock_struts);
             }
+            self.applyDockStruts();
         }
     }
 
@@ -380,7 +379,6 @@ pub const Manager = struct {
             });
         }
 
-        // Update WM_STATE and visibility
         // TODO: move to MapRequest?
         const state = x11.getWindowWMState(self.display, w) orelse x11.WithdrawnState;
         var new_state = x11.NormalState;
@@ -446,29 +444,26 @@ pub const Manager = struct {
                 .bottom = @intCast(i32, struts.b),
             };
 
-        var state = x11.getWindowWMState(self.display, w) orelse x11.WithdrawnState;
-        if (state == x11.WithdrawnState) {
-            state = x11.NormalState;
-            x11.unhideWindow(self.display, w);
-        }
-        if (state == x11.IconicState) {
-            self.applyStruts(.{});
-        } else {
-            self.applyStruts(self.dock_struts);
-        }
-
+        const state = x11.getWindowWMState(self.display, w) orelse x11.WithdrawnState;
+        if (state == x11.WithdrawnState) x11.unhideWindow(self.display, w);
         self.dock_window = w;
+        self.applyDockStruts();
     }
 
     fn removeDockWindow(self: *Self) void {
         log.info("Removed dock window {?}", .{self.dock_window});
         self.dock_window = null;
         self.dock_struts = .{};
-        self.applyStruts(.{});
+        self.applyDockStruts();
     }
 
-    fn applyStruts(self: *Self, struts: util.Struts) void {
-        self.activeMonitor().applySruts(struts);
+    fn applyDockStruts(self: *Self) void {
+        var struts = util.Struts{};
+        if (self.dock_window) |w| {
+            const state = x11.getWindowWMState(self.display, w);
+            struts = if (state == x11.NormalState) self.dock_struts else .{};
+        }
+        self.monitor.applyStruts(struts);
         self.markLayoutDirty();
         log.info("Applied struts {}", .{struts});
     }

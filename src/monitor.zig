@@ -38,7 +38,7 @@ pub const Monitor = struct {
         self.active_workspace_id = workspace_id;
     }
 
-    pub fn applySruts(self: *Self, struts: util.Struts) void {
+    pub fn applyStruts(self: *Self, struts: util.Struts) void {
         self.origin.x = self.screen_origin.x + struts.left;
         self.origin.y = self.screen_origin.y + struts.top;
         self.size.x = self.screen_size.x - (struts.left + struts.right);
