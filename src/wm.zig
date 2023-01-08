@@ -244,10 +244,7 @@ pub const Manager = struct {
             // Set focused state on the new client, grab mouse buttons, and move it to the front of the list.
             const c = &n.data;
             if (!c.is_fullscreen) c.setFocusedBorder(true);
-            if (c.is_passive_input)
-                _ = x11.XSetInputFocus(self.display, c.w, x11.RevertToPointerRoot, x11.CurrentTime);
-            if (x11.windowParticipatesInProtocol(self.display, c.w, atoms.wm_take_focus))
-                x11.sendProtocolEvent(self.display, c.w, atoms.wm_take_focus);
+            c.setInputFocus();
             self.grabMouseButtons(c, ClientFocus.Focused);
             if (c.is_floating)
                 _ = x11.XRaiseWindow(self.display, c.w);
@@ -364,7 +361,7 @@ pub const Manager = struct {
             _ = x11.XSelectInput(
                 self.display,
                 c.w,
-                x11.EnterWindowMask | x11.PropertyChangeMask,
+                x11.EnterWindowMask | x11.PropertyChangeMask | x11.FocusChangeMask,
             );
 
             // Add client
@@ -635,6 +632,7 @@ const EventHandler = struct {
             x11.KeyRelease => self.onKeyRelease(e.xkey),
             x11.ClientMessage => self.onClientMessage(e.xclient),
             x11.PropertyNotify => self.onPropertyNotify(e.xproperty),
+            x11.FocusIn => self.onFocusIn(e.xfocus),
             else => log.trace("ignored event {s}", .{ename}),
         };
     }
@@ -900,5 +898,13 @@ const EventHandler = struct {
             x11.XA_WM_NORMAL_HINTS => client.updateWMNormalHints(),
             else => {},
         }
+    }
+
+    fn onFocusIn(self: *Self, ev: x11.XFocusChangeEvent) !void {
+        const c = self.wm.findClientByWindow(ev.window) orelse return;
+        if (self.wm.focused_client == c) return;
+
+        // Return focus to the currenly focused client.
+        c.setInputFocus();
     }
 };

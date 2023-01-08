@@ -54,11 +54,20 @@ pub const Client = struct {
         if (@ptrCast(?*x11.XWMHints, x11.XGetWMHints(self.d, self.w))) |hints| {
             defer _ = x11.XFree(hints);
 
+            log.trace("WMHints for {}: flags={}", .{ self.w, hints.flags });
+            if (hints.flags & x11.InputHint != 0) log.trace("  InputHint", .{});
+            if (hints.flags & x11.StateHint != 0) log.trace("  StateHint", .{});
+            if (hints.flags & x11.IconPixmapHint != 0) log.trace("  IconPixmapHint", .{});
+            if (hints.flags & x11.IconWindowHint != 0) log.trace("  IconWindowHint", .{});
+            if (hints.flags & x11.IconPositionHint != 0) log.trace("  IconPositionHint", .{});
+            if (hints.flags & x11.IconMaskHint != 0) log.trace("  IconMaskHint", .{});
+            if (hints.flags & x11.WindowGroupHint != 0) log.trace("  WindowGroupHint", .{});
+            if (hints.flags & x11.XUrgencyHint != 0) log.trace("  UrgencyHint", .{});
+
             if (hints.flags & x11.InputHint != 0) self.is_passive_input = hints.input != 0;
             // TODO: urgency hint
 
-            log.trace("WMHints for {}: is_passive_input={}, is_urgent={}", .{
-                self.w,
+            log.trace("is_passive_input={}, is_urgent={}", .{
                 self.is_passive_input,
                 false,
             });
@@ -103,6 +112,14 @@ pub const Client = struct {
                 self.base_size,
             });
         }
+    }
+
+    /// Set input focus to the client window and send WM_TAKE_FOCUS protocol event.
+    pub fn setInputFocus(self: *Self) void {
+        if (self.is_passive_input)
+            _ = x11.XSetInputFocus(self.d, self.w, x11.RevertToPointerRoot, x11.CurrentTime);
+        if (x11.windowParticipatesInProtocol(self.d, self.w, atoms.wm_take_focus))
+            x11.sendProtocolEvent(self.d, self.w, atoms.wm_take_focus);
     }
 
     pub fn setFocusedBorder(self: *Client, focused: bool) void {
