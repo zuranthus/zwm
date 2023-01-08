@@ -25,6 +25,7 @@ pub const Manager = struct {
     var is_instance_alive = false;
 
     display: *x11.Display = undefined,
+    root: x11.Window = undefined,
     clients: ClientOwner = undefined,
     event_handler: EventHandler = undefined,
     monitor: Monitor = undefined,
@@ -68,6 +69,7 @@ pub const Manager = struct {
 
         is_instance_alive = true;
         self.display = display;
+        self.root = root;
         ErrorHandler.register();
         atoms.init(display);
         self.clients = ClientOwner.init();
@@ -80,6 +82,7 @@ pub const Manager = struct {
                 x11.XDisplayHeight(display, screen),
             ),
         );
+
         x11.setWindowProperty(
             self.display,
             root,
@@ -87,7 +90,10 @@ pub const Manager = struct {
             x11.XA_CARDINAL,
             @intCast(c_ulong, self.monitor.workspaces.len),
         );
+
+        _ = x11.XDeleteProperty(self.display, root, atoms.net_client_list);
         self.manageExistingWindows();
+
         var wa = std.mem.zeroes(x11.XSetWindowAttributes);
         // show cursor
         wa.cursor = x11.XCreateFontCursor(self.display, x11.XC_left_ptr);
@@ -219,7 +225,7 @@ pub const Manager = struct {
 
         x11.setWindowProperty(
             self.display,
-            x11.XDefaultRootWindow(self.display),
+            self.root,
             atoms.net_current_desktop,
             x11.XA_CARDINAL,
             @intCast(c_ulong, self.monitor.active_workspace_id),
@@ -260,7 +266,7 @@ pub const Manager = struct {
 
         x11.setWindowProperty(
             self.display,
-            x11.XDefaultRootWindow(self.display),
+            self.root,
             atoms.net_active_window,
             x11.XA_WINDOW,
             if (self.focused_client) |c| c.w else x11.None,
@@ -268,11 +274,10 @@ pub const Manager = struct {
     }
 
     fn manageExistingWindows(self: *Self) void {
-        const root = x11.XDefaultRootWindow(self.display);
         var unused_win: x11.Window = undefined;
         var windows: [*c]x11.Window = null;
         var num: c_uint = 0;
-        _ = x11.XQueryTree(self.display, root, &unused_win, &unused_win, &windows, &num);
+        _ = x11.XQueryTree(self.display, self.root, &unused_win, &unused_win, &windows, &num);
         defer _ = if (windows != null) x11.XFree(windows);
         if (num == 0) return;
 
@@ -375,6 +380,18 @@ pub const Manager = struct {
 
             if (is_fullscreen) self.setClientFullscreen(c, true);
 
+            // Add to client list property
+            _ = x11.XChangeProperty(
+                self.display,
+                self.root,
+                atoms.net_client_list,
+                x11.XA_WINDOW,
+                32,
+                x11.PropModeAppend,
+                @ptrCast(*const u8, &c.w),
+                1,
+            );
+
             log.info("Added client {} with pos={}, size={}, is_floating={}, is_transient={}, is_dialog={}", .{
                 w,
                 pos,
@@ -409,6 +426,24 @@ pub const Manager = struct {
         const client = &node.data;
         if (self.focused_client == client) self.focused_client = null;
         self.clients.destroyNode(node);
+
+        // Update client list property
+        _ = x11.XDeleteProperty(self.display, self.root, atoms.net_client_list);
+        var it = self.clients.list.first;
+        while (it) |n| : (it = n.next) {
+            _ = x11.XChangeProperty(
+                self.display,
+                self.root,
+                atoms.net_client_list,
+                x11.XA_WINDOW,
+                32,
+                x11.PropModeAppend,
+                @ptrCast(*const u8, &n.data.w),
+                1,
+            );
+        }
+
+
         log.info("Removed client {}", .{w});
     }
 
@@ -837,8 +872,7 @@ const EventHandler = struct {
     }
 
     fn onConfigureNotify(self: *Self, ev: x11.XConfigureEvent) !void {
-        const root = x11.XDefaultRootWindow(self.display);
-        if (root == ev.window) {
+        if (self.wm.root == ev.window) {
             self.wm.setMonitorSize(Size.init(ev.width, ev.height));
             log.info("ConfigureNotify for root window, new size: ({}, {})", .{ ev.width, ev.height });
         } else if (self.wm.findClientByWindow(ev.window)) |_| {

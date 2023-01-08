@@ -16,6 +16,7 @@ pub var net_wm_state_fullscreen: x11.Atom = undefined;
 pub var net_number_of_desktops: x11.Atom = undefined;
 pub var net_current_desktop: x11.Atom = undefined;
 pub var net_active_window: x11.Atom = undefined;
+pub var net_client_list : x11.Atom = undefined;
 
 pub fn init(d: *x11.Display) void {
     wm_protocols = x11.XInternAtom(d, "WM_PROTOCOLS", 0);
@@ -34,6 +35,7 @@ pub fn init(d: *x11.Display) void {
     net_number_of_desktops = x11.XInternAtom(d, "_NET_NUMBER_OF_DESKTOPS", 0);
     net_current_desktop = x11.XInternAtom(d, "_NET_CURRENT_DESKTOP", 0);
     net_active_window = x11.XInternAtom(d, "_NET_ACTIVE_WINDOW", 0);
+    net_client_list = x11.XInternAtom(d, "_NET_CLIENT_LIST", 0);
 
     const supported_net_atoms = [_]x11.Atom{
         net_supported,
@@ -47,6 +49,7 @@ pub fn init(d: *x11.Display) void {
         net_number_of_desktops,
         net_current_desktop,
         net_active_window,
+        net_client_list,
     };
     _ = x11.XChangeProperty(
         d,
