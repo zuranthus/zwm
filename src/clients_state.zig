@@ -26,21 +26,6 @@ pub fn saveState(m: *Manager, state_file: []const u8) !void {
     // main factor
     const main_factor: f32 = m.activeMonitor().main_size;
     try writer.writeAll(std.mem.asBytes(&main_factor));
-
-    // client state
-    for (m.activeMonitor().workspaces) |*w| {
-        var i: usize = w.clients.items.len;
-        while (i > 0) {
-            i -= 1;
-            const c = w.clients.items[i];
-            const state = State{
-                .w = c.w,
-                .m_id = c.monitor_id.?,
-                .w_id = c.workspace_id.?,
-            };
-            try writer.writeStruct(state);
-        }
-    }
 }
 
 pub fn loadState(m: *Manager, state_file: []const u8) !void {
@@ -59,23 +44,6 @@ pub fn loadState(m: *Manager, state_file: []const u8) !void {
     var main_factor: f32 = 50.0;
     _ = try reader.readAll(std.mem.asBytes(&main_factor));
     m.activeMonitor().main_size = main_factor;
-
-    // client state
-    while (true) {
-        const state = reader.readStruct(State) catch |e| {
-            if (e == error.EndOfStream) break;
-            return e;
-        };
-        var it = m.clients.list.first;
-        while (it) |node| : (it = node.next) {
-            const c = &node.data;
-            if (node.data.w == state.w) {
-                const mon = m.activeMonitor(); // TODO: multi-monitor
-                mon.removeClient(c);
-                mon.addClient(c, state.w_id);
-            }
-        }
-    }
 
     m.focusWorkspace(active_workspace_id);
 }
