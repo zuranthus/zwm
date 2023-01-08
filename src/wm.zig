@@ -395,6 +395,14 @@ pub const Manager = struct {
                 }
             }
             self.activeMonitor().addClient(c, workspace_id);
+            // TODO: Move prop change into monitor, workspace or client.
+            x11.setWindowPropertyScalar(
+                self.display,
+                c.w,
+                atoms.net_wm_desktop,
+                x11.XA_CARDINAL,
+                c.workspace_id.?,
+            );
 
             if (is_fullscreen) self.setClientFullscreen(c, true);
 
