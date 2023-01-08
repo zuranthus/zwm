@@ -954,10 +954,7 @@ const EventHandler = struct {
     }
 
     fn onFocusIn(self: *Self, ev: x11.XFocusChangeEvent) !void {
-        const c = self.wm.findClientByWindow(ev.window) orelse return;
-        if (self.wm.focused_client == c) return;
-
-        // Return focus to the currenly focused client.
-        c.setInputFocus();
+        log.trace("FocusIn for {}", .{ev.window});
+        _ = self;
     }
 };
