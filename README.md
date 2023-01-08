@@ -19,7 +19,7 @@ that is easier to hack than dwm. Both goals are work in progress :)
 - [x] Focus and window management commands
 - [x] Spawn process command
 - [x] Customizable config file
-- [x] Hot reloading with persisted windows state (requires a [script](#hot-reloading))
+- [x] Hot reloading with persisted state (requires a [script](#hot-reloading))
 - [x] Support for external status bar, like [Polybar](https://github.com/polybar/polybar)
 - [x] Floating windows
 - [x] Fullscreen windows
@@ -55,7 +55,7 @@ Enabling hot reloading is easy: use the following script in `~/.xinitrc` instead
 ```bash
 while :
 do
-  zwm --save-state ~/.zwm.state
+  zwm
   [[ $? == 42 ]] || break;
 done
 ```
