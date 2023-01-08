@@ -122,7 +122,18 @@ pub const Manager = struct {
         }
 
         // force-apply focus
-        focusWorkspace(self, self.activeWorkspace().id);
+        var workspace_id: u8 = 0;
+        if (x11.getWindowProperty(
+            self.display,
+            self.root,
+            atoms.net_current_desktop,
+            x11.XA_CARDINAL,
+            c_ulong,
+        )) |id| {
+            const wid = @truncate(u8, id);
+            if (wid < 9) workspace_id = wid;
+        }
+        focusWorkspace(self, workspace_id);
 
         log.info("Created and initialized wm", .{});
 
