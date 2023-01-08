@@ -4,7 +4,6 @@ const log = @import("log.zig");
 const config = @import("config.zig");
 const commands = @import("commands.zig");
 const util = @import("util.zig");
-const clients_state = @import("clients_state.zig");
 const atoms = @import("atoms.zig");
 const Client = @import("client.zig").Client;
 const TileLayout = @import("layout.zig").TileLayout;
@@ -39,13 +38,6 @@ pub const Manager = struct {
     pub fn deinit(self: *Self) void {
         if (!is_instance_alive) return;
 
-        if (self.state_file) |file| {
-            log.info("Saving state to {s}", .{file});
-            clients_state.saveState(self, file) catch |e| {
-                log.err("Cannot save clients state, error {}", .{e});
-            };
-        }
-
         _ = x11.XUngrabKey(self.display, x11.AnyKey, x11.AnyModifier, x11.XDefaultRootWindow(self.display));
         self.monitor.deinit();
         self.event_handler.deinit();
@@ -57,7 +49,7 @@ pub const Manager = struct {
         log.info("Destroyed wm", .{});
     }
 
-    pub fn run(self: *Self, display_name_arg: ?[:0]const u8, state_file_arg: ?[]const u8) !u8 {
+    pub fn run(self: *Self, display_name_arg: ?[:0]const u8) !u8 {
         if (is_instance_alive) return error.WmInstanceAlreadyExists;
         const display_name: [:0]const u8 = if (display_name_arg) |name| name else ":0";
         const display = x11.XOpenDisplay(@ptrCast([*c]const u8, display_name)) orelse return error.CannotOpenDisplay;
@@ -113,16 +105,21 @@ pub const Manager = struct {
                 x11.GrabModeAsync,
             );
 
-        self.state_file = state_file_arg;
-        if (self.state_file) |file| {
-            log.info("Loading state from {s}", .{file});
-            clients_state.loadState(self, file) catch |e| {
-                log.err("Cannot load clients state, error {}", .{e});
-            };
+        // Extract the main size from the root window
+        if (x11.getWindowProperty(
+            self.display,
+            self.root,
+            atoms.zwm_main_factor,
+            x11.XA_CARDINAL,
+            c_ulong,
+        )) |main_size| {
+            const size = @intToFloat(f32, main_size);
+            if (size >= 0 and size <= 100) self.monitor.main_size = size;
         }
 
         // force-apply focus
         var workspace_id: u8 = 0;
+        // Extract the active workspace id from the root window
         if (x11.getWindowProperty(
             self.display,
             self.root,
@@ -614,6 +611,14 @@ pub const Manager = struct {
 
         // Skip EnterNotify events to avoid changing the focused window without delibarate mouse movement
         self.event_handler.skipEnterWindowEvents();
+        // Save main factor to root window property to be able to restore it on restart
+        x11.setWindowPropertyScalar(
+            self.display,
+            self.root,
+            atoms.zwm_main_factor,
+            x11.XA_CARDINAL,
+            @floatToInt(i32, self.activeMonitor().main_size),
+        );
     }
 
     fn isAnotherWmDetected(d: *x11.Display, root: x11.Window) bool {
