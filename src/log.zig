@@ -11,7 +11,16 @@ fn logColor(
     comptime s: []const u8,
     args: anytype,
 ) void {
-    print("{s}{s} ", .{ col, cat });
+    const timestamp = @intCast(u64, std.time.timestamp());
+    const epoch_seconds = std.time.epoch.EpochSeconds{ .secs = timestamp };
+    const day_seconds = epoch_seconds.getDaySeconds();
+    print("{s}[{d:0<2}:{d:0<2}:{d:0<2}] {s} ", .{
+        col,
+        day_seconds.getHoursIntoDay(),
+        day_seconds.getMinutesIntoHour(),
+        day_seconds.getSecondsIntoMinute(),
+        cat,
+    });
     print(s, args);
     print("\n{s}", .{text_reset});
 }

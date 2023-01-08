@@ -83,12 +83,12 @@ pub const Manager = struct {
             ),
         );
 
-        x11.setWindowProperty(
+        x11.setWindowPropertyScalar(
             self.display,
             root,
             atoms.net_number_of_desktops,
             x11.XA_CARDINAL,
-            @intCast(c_ulong, self.monitor.workspaces.len),
+            self.monitor.workspaces.len,
         );
 
         _ = x11.XDeleteProperty(self.display, root, atoms.net_client_list);
@@ -173,6 +173,15 @@ pub const Manager = struct {
             self.applyLayout();
             self.updateFocus();
         }
+
+        x11.setWindowPropertyScalar(
+            self.display,
+            client.w,
+            atoms.net_wm_desktop,
+            x11.XA_CARDINAL,
+            workspace_id,
+        );
+
         log.trace("Moved client {} to ({}, {})", .{ client.w, monitor_id, workspace_id });
     }
 
@@ -223,13 +232,15 @@ pub const Manager = struct {
         self.activeMonitor().activateWorkspace(workspace_id);
         self.applyLayout();
 
-        x11.setWindowProperty(
+        x11.setWindowPropertyScalar(
             self.display,
             self.root,
             atoms.net_current_desktop,
             x11.XA_CARDINAL,
-            @intCast(c_ulong, self.monitor.active_workspace_id),
+            self.monitor.active_workspace_id,
         );
+
+        log.trace("Activated workspace {}", .{workspace_id});
     }
 
     // If the client node is not null,
@@ -250,12 +261,12 @@ pub const Manager = struct {
             // Set focused state on the new client, grab mouse buttons, and move it to the front of the list.
             const c = &n.data;
             if (!c.is_fullscreen) c.setFocusedBorder(true);
-            c.setInputFocus();
             self.grabMouseButtons(c, ClientFocus.Focused);
             if (c.is_floating)
                 _ = x11.XRaiseWindow(self.display, c.w);
             self.clients.moveNodeToFront(n);
             self.focused_client = c;
+            c.setInputFocus();
             log.info("Focused client {}", .{c.w});
         } else {
             // Reset focus to root window.
@@ -264,7 +275,7 @@ pub const Manager = struct {
             log.info("Cleared focus", .{});
         }
 
-        x11.setWindowProperty(
+        x11.setWindowPropertyScalar(
             self.display,
             self.root,
             atoms.net_active_window,
@@ -376,6 +387,13 @@ pub const Manager = struct {
                 if (self.findClientByWindow(w_trans)) |c_trans|
                     workspace_id = c_trans.workspace_id;
             }
+            // Otherwise, use the client's _NET_WM_DESKTOP property if it exists
+            if (workspace_id == null) {
+                if (x11.getWindowProperty(self.display, w, atoms.net_wm_desktop, x11.XA_CARDINAL, c_ulong)) |id| {
+                    workspace_id = @truncate(u8, id);
+                    if (workspace_id.? >= 9) workspace_id = null;
+                }
+            }
             self.activeMonitor().addClient(c, workspace_id);
 
             if (is_fullscreen) self.setClientFullscreen(c, true);
@@ -392,8 +410,9 @@ pub const Manager = struct {
                 1,
             );
 
-            log.info("Added client {} with pos={}, size={}, is_floating={}, is_transient={}, is_dialog={}", .{
+            log.info("Added client {} to workspace {} with pos={}, size={}, is_floating={}, is_transient={}, is_dialog={}", .{
                 w,
+                c.workspace_id.? + 1,
                 pos,
                 size,
                 is_floating,
@@ -442,7 +461,6 @@ pub const Manager = struct {
                 1,
             );
         }
-
 
         log.info("Removed client {}", .{w});
     }
@@ -698,8 +716,9 @@ const EventHandler = struct {
         }
 
         x11.setWindowWMState(self.display, w, x11.WithdrawnState);
-        // Remove _NET_WM_STATE when window goes into Withdrawn state (follow EWMH guidelines)
+        // Remove _NET_WM_STATE and _NET_WM_DESKTOP when window goes into Withdrawn state (follow EWMH guidelines)
         _ = x11.XDeleteProperty(self.display, w, atoms.net_wm_state);
+        _ = x11.XDeleteProperty(self.display, w, atoms.net_wm_desktop);
         _ = x11.XSync(self.display, 0);
     }
 

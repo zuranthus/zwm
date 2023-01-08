@@ -80,7 +80,7 @@ pub const Client = struct {
         self.is_fullscreen = is_fullscreen;
         _ = x11.XSetWindowBorderWidth(self.d, self.w, self.borderWidth());
         self.setFocusedBorder(self.is_focused_border);
-        x11.setWindowProperty(
+        x11.setWindowPropertyScalar(
             self.d,
             self.w,
             atoms.net_wm_state,

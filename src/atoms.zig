@@ -13,6 +13,7 @@ pub var net_wm_window_type_dock: x11.Atom = undefined;
 pub var net_wm_window_type_dialog: x11.Atom = undefined;
 pub var net_wm_state: x11.Atom = undefined;
 pub var net_wm_state_fullscreen: x11.Atom = undefined;
+pub var net_wm_desktop : x11.Atom = undefined;
 pub var net_number_of_desktops: x11.Atom = undefined;
 pub var net_current_desktop: x11.Atom = undefined;
 pub var net_active_window: x11.Atom = undefined;
@@ -32,6 +33,7 @@ pub fn init(d: *x11.Display) void {
     net_wm_window_type_dialog = x11.XInternAtom(d, "_NET_WM_WINDOW_TYPE_DIALOG", 0);
     net_wm_state = x11.XInternAtom(d, "_NET_WM_STATE", 0);
     net_wm_state_fullscreen = x11.XInternAtom(d, "_NET_WM_STATE_FULLSCREEN", 0);
+    net_wm_desktop = x11.XInternAtom(d, "_NET_WM_DESKTOP", 0);
     net_number_of_desktops = x11.XInternAtom(d, "_NET_NUMBER_OF_DESKTOPS", 0);
     net_current_desktop = x11.XInternAtom(d, "_NET_CURRENT_DESKTOP", 0);
     net_active_window = x11.XInternAtom(d, "_NET_ACTIVE_WINDOW", 0);
@@ -46,6 +48,7 @@ pub fn init(d: *x11.Display) void {
         net_wm_window_type_dialog,
         net_wm_state,
         net_wm_state_fullscreen,
+        net_wm_desktop,
         net_number_of_desktops,
         net_current_desktop,
         net_active_window,

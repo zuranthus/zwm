@@ -96,6 +96,11 @@ pub fn getWindowProperty(d: *x.Display, w: x.Window, property: x.Atom, property_
     return result;
 }
 
+pub fn setWindowPropertyScalar(d: *x.Display, w: x.Window, property: x.Atom, property_type: x.Atom, data: anytype) void {
+    const long_data = @intCast(c_ulong, data);
+    _ = x.XChangeProperty(d, w, property, property_type, 32, x.PropModeReplace, std.mem.asBytes(&long_data), 1);
+}
+
 pub fn setWindowProperty(d: *x.Display, w: x.Window, property: x.Atom, property_type: x.Atom, data: anytype) void {
     const num = @sizeOf(@TypeOf(data)) / @sizeOf(c_ulong);
     _ = x.XChangeProperty(d, w, property, property_type, 32, x.PropModeReplace, std.mem.asBytes(&data), num);
