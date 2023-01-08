@@ -44,6 +44,31 @@ pub fn getWindowWMState(d: *x.Display, w: x.Window) ?i32 {
     return null;
 }
 
+/// Returns true if the window contains protocol in its WM_PROTOCOLS property.
+pub fn windowParticipatesInProtocol(d: *x.Display, w: x.Window, protocol: x.Atom) bool {
+    var protocols: [*c]x.Atom = null;
+    var count: i32 = 0;
+    if (x.XGetWMProtocols(d, w, &protocols, &count) != 0) {
+        defer _ = x.XFree(protocols);
+        return std.mem.indexOfScalar(x.Atom, protocols[0..@intCast(usize, count)], protocol) != null;
+    }
+    return false;
+}
+
+/// Sends a ClientMessage event to the window with the specified protocol.
+pub fn sendProtocolEvent(d: *x.Display, w: x.Window, protocol: x.Atom) void {
+    var event = std.mem.zeroes(x.XEvent);
+    event.type = x.ClientMessage;
+    event.xclient.message_type = atoms.wm_protocols;
+    event.xclient.window = w;
+    event.xclient.format = 32;
+    event.xclient.data.l[0] = @intCast(c_long, protocol);
+    event.xclient.data.l[1] = x.CurrentTime; // TODO: replace with timestamp? see ICCCM for WM_TAKE_FOCUS.
+    if (x.XSendEvent(d, w, 0, x.NoEventMask, &event) == 0) {
+        log.err("Failed to send protocol event to window {d}", .{w});
+    }
+}
+
 pub fn getWindowProperty(d: *x.Display, w: x.Window, property: x.Atom, property_type: x.Atom, comptime dataType: type) ?dataType {
     var result: ?dataType = null;
     var actual_type: x.Atom = undefined;
@@ -83,7 +108,7 @@ pub fn getAtomName(d: *x.Display, atom: x.Atom, outName: *[128]u8) bool {
         _ = x.XFree(atom_name);
         return true;
     }
-    outName[0] = 0;
+    outName.* = .{};
     return false;
 }
 

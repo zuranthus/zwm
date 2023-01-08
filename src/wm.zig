@@ -175,7 +175,7 @@ pub const Manager = struct {
     }
 
     pub fn killClientWindow(self: *Self, client: *Client) void {
-        self.event_handler.killWindow(client.w) catch unreachable;
+        self.event_handler.killWindow(client.w);
     }
 
     pub fn toggleDockWindow(self: *Self) void {
@@ -244,10 +244,13 @@ pub const Manager = struct {
             // Set focused state on the new client, grab mouse buttons, and move it to the front of the list.
             const c = &n.data;
             if (!c.is_fullscreen) c.setFocusedBorder(true);
-            _ = x11.XSetInputFocus(self.display, c.w, x11.RevertToPointerRoot, x11.CurrentTime);
+            if (c.is_passive_input)
+                _ = x11.XSetInputFocus(self.display, c.w, x11.RevertToPointerRoot, x11.CurrentTime);
+            if (x11.windowParticipatesInProtocol(self.display, c.w, atoms.wm_take_focus))
+                x11.sendProtocolEvent(self.display, c.w, atoms.wm_take_focus);
+            self.grabMouseButtons(c, ClientFocus.Focused);
             if (c.is_floating)
                 _ = x11.XRaiseWindow(self.display, c.w);
-            self.grabMouseButtons(c, ClientFocus.Focused);
             self.clients.moveNodeToFront(n);
             self.focused_client = c;
             log.info("Focused client {}", .{c.w});
@@ -290,7 +293,7 @@ pub const Manager = struct {
             if (wa.map_state == x11.IsViewable or x11.getWindowWMState(self.display, w) == x11.IconicState) {
                 self.processNewWindow(w);
             } else {
-                log.info("Ignoring hidden {}", .{w});
+                log.trace("Ignoring hidden {}", .{w});
             }
         }
 
@@ -343,7 +346,13 @@ pub const Manager = struct {
             // Pos, size
             var pos = Pos.init(wa.x, wa.y);
             var size = Pos.init(wa.width, wa.height);
-            log.trace("Window Attribtues: x={}, y={}, width={}, height={}", .{wa.x, wa.y, wa.width, wa.height});
+            log.trace("WindowAttribtues for {}: x={}, y={}, width={}, height={}", .{
+                w,
+                wa.x,
+                wa.y,
+                wa.width,
+                wa.height,
+            });
             util.clipWindowPosSize(self.activeMonitor().origin, self.activeMonitor().size, &pos, &size);
 
             const new_node = self.clients.createNode();
@@ -355,7 +364,7 @@ pub const Manager = struct {
             _ = x11.XSelectInput(
                 self.display,
                 c.w,
-                x11.EnterWindowMask,
+                x11.EnterWindowMask | x11.PropertyChangeMask,
             );
 
             // Add client
@@ -625,6 +634,7 @@ const EventHandler = struct {
             x11.KeyPress => self.onKeyPress(e.xkey),
             x11.KeyRelease => self.onKeyRelease(e.xkey),
             x11.ClientMessage => self.onClientMessage(e.xclient),
+            x11.PropertyNotify => self.onPropertyNotify(e.xproperty),
             else => log.trace("ignored event {s}", .{ename}),
         };
     }
@@ -807,34 +817,10 @@ const EventHandler = struct {
         self.wm.focusClient(client);
     }
 
-    fn sendEvent(self: *Self, w: x11.Window, protocol: x11.Atom) !void {
-        var event = std.mem.zeroes(x11.XEvent);
-        event.type = x11.ClientMessage;
-        event.xclient.message_type = atoms.wm_protocols;
-        event.xclient.window = w;
-        event.xclient.format = 32;
-        event.xclient.data.l[0] = @intCast(c_long, protocol);
-        if (x11.XSendEvent(self.display, w, 0, x11.NoEventMask, &event) == 0) return error.Error;
-    }
-
-    fn killWindow(self: *Self, w: x11.Window) !void {
-        var protocols: [*c]x11.Atom = null;
-        var count: i32 = 0;
-        _ = x11.XGetWMProtocols(self.display, w, &protocols, &count);
-        defer _ = if (protocols != null) x11.XFree(protocols);
-
-        var supports_delete = false;
-        if (count > 0) {
-            for (protocols[0..@intCast(usize, count)]) |p| {
-                if (p == atoms.wm_delete) {
-                    supports_delete = true;
-                    break;
-                }
-            }
-        }
-        if (supports_delete) {
+    fn killWindow(self: *Self, w: x11.Window) void {
+        if (x11.windowParticipatesInProtocol(self.display, w, atoms.wm_delete)) {
             log.info("Sending wm_delete to {}", .{w});
-            try self.sendEvent(w, atoms.wm_delete);
+            x11.sendProtocolEvent(self.display, w, atoms.wm_delete);
         } else {
             log.info("Killing {}", .{w});
             _ = x11.XKillClient(self.display, w);
@@ -856,7 +842,7 @@ const EventHandler = struct {
         const root = x11.XDefaultRootWindow(self.display);
         if (root == ev.window) {
             self.wm.setMonitorSize(Size.init(ev.width, ev.height));
-            log.info("ConfigureNotify for root window, new size: ({}, {})", .{ev.width, ev.height});
+            log.info("ConfigureNotify for root window, new size: ({}, {})", .{ ev.width, ev.height });
         } else if (self.wm.findClientByWindow(ev.window)) |_| {
             log.trace("ConfgureNotify for client {} ignored", .{ev.window});
         }
@@ -864,7 +850,7 @@ const EventHandler = struct {
 
     fn onClientMessage(self: *Self, ev: x11.XClientMessageEvent) !void {
         var processed = false;
-        var atom_name: [128]u8 = .{0} ** 128;
+        var atom_name: [128]u8 = undefined;
 
         if (ev.message_type == atoms.net_current_desktop) {
             // Dock is requesting to change the current desktop
@@ -899,6 +885,20 @@ const EventHandler = struct {
         if (!processed) {
             _ = x11.getAtomName(self.display, ev.message_type, &atom_name);
             log.trace("ignored ClientMessage {s} ({})", .{ atom_name, ev.message_type });
+        }
+    }
+
+    fn onPropertyNotify(self: *Self, ev: x11.XPropertyEvent) !void {
+        const client = self.wm.findClientByWindow(ev.window) orelse return;
+
+        var atom_name: [128]u8 = undefined;
+        _ = x11.getAtomName(self.display, ev.atom, &atom_name);
+        log.trace("PropertyNotify for {} with property {s} ({})", .{ ev.window, atom_name, ev.atom });
+
+        switch (ev.atom) {
+            x11.XA_WM_HINTS => client.updateWMHints(),
+            x11.XA_WM_NORMAL_HINTS => client.updateWMNormalHints(),
+            else => {},
         }
     }
 };

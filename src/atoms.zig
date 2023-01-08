@@ -1,7 +1,8 @@
 const x11 = @import("x11.zig");
 
-pub var wm_delete: x11.Atom = undefined;
 pub var wm_protocols: x11.Atom = undefined;
+pub var wm_delete: x11.Atom = undefined;
+pub var wm_take_focus: x11.Atom = undefined;
 pub var wm_state: x11.Atom = undefined;
 pub var wm_change_state: x11.Atom = undefined;
 pub var net_supported: x11.Atom = undefined;
@@ -17,8 +18,9 @@ pub var net_current_desktop: x11.Atom = undefined;
 pub var net_active_window: x11.Atom = undefined;
 
 pub fn init(d: *x11.Display) void {
-    wm_delete = x11.XInternAtom(d, "WM_DELETE_WINDOW", 0);
     wm_protocols = x11.XInternAtom(d, "WM_PROTOCOLS", 0);
+    wm_delete = x11.XInternAtom(d, "WM_DELETE_WINDOW", 0);
+    wm_take_focus = x11.XInternAtom(d, "WM_TAKE_FOCUS", 0);
     wm_state = x11.XInternAtom(d, "WM_STATE", 0);
     wm_change_state = x11.XInternAtom(d, "WM_CHANGE_STATE", 0);
     net_supported = x11.XInternAtom(d, "_NET_SUPPORTED", 0);

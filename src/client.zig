@@ -20,6 +20,7 @@ pub const Client = struct {
     is_floating: bool = false,
     is_fullscreen: bool = false,
     is_focused_border: bool = false,
+    is_passive_input: bool = true,
     base_size: Size = Size.init(0, 0),
     min_size: Size = Size.init(1, 1),
     max_size: Size = Size.init(std.math.maxInt(i32), std.math.maxInt(i32)),
@@ -28,10 +29,11 @@ pub const Client = struct {
 
     pub fn init(win: x11.Window, d: *x11.Display, pos: Pos, inner_size: Size, floating: bool) Client {
         var c = Client{ .w = win, .d = d };
-        c.updateSizeHints();
+        c.updateWMNormalHints();
+        c.updateWMHints();
         c.is_floating = floating or (c.max_size.x != 0 and c.max_size.y != 0 and c.min_size.eq(c.max_size));
 
-        log.trace("Init client: {} pos={}, inner_size={}, floating={}", .{
+        log.trace("Init client {}: pos={}, inner_size={}, floating={}", .{
             c.w,
             pos,
             inner_size,
@@ -46,6 +48,21 @@ pub const Client = struct {
 
     fn borderWidth(self: *Self) c_uint {
         return if (self.is_fullscreen) 0 else @intCast(c_uint, config.border.width);
+    }
+
+    pub fn updateWMHints(self: *Self) void {
+        if (@ptrCast(?*x11.XWMHints, x11.XGetWMHints(self.d, self.w))) |hints| {
+            defer _ = x11.XFree(hints);
+
+            if (hints.flags & x11.InputHint != 0) self.is_passive_input = hints.input != 0;
+            // TODO: urgency hint
+
+            log.trace("WMHints for {}: is_passive_input={}, is_urgent={}", .{
+                self.w,
+                self.is_passive_input,
+                false,
+            });
+        }
     }
 
     pub fn setFullscreenState(self: *Self, is_fullscreen: bool) void {
@@ -63,7 +80,7 @@ pub const Client = struct {
         );
     }
 
-    pub fn updateSizeHints(self: *Client) void {
+    pub fn updateWMNormalHints(self: *Client) void {
         var hints: x11.XSizeHints = undefined;
         var unused: c_long = undefined;
         if (x11.XGetWMNormalHints(self.d, self.w, &hints, &unused) != 0) {
@@ -79,7 +96,7 @@ pub const Client = struct {
                 self.max_size = self.min_size;
             }
 
-            log.trace("size hints for {}: min_size={}, max_size={}, base_size={}", .{
+            log.trace("WMNormalHints for {}: min_size={}, max_size={}, base_size={}", .{
                 self.w,
                 self.min_size,
                 self.max_size,
