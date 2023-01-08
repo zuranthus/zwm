@@ -23,11 +23,12 @@ that is easier to hack than dwm. Both goals are work in progress :)
 - [x] Support for external status bar, like [Polybar](https://github.com/polybar/polybar)
 - [x] Floating windows
 - [x] Fullscreen windows
+- [x] ICCCM and EWMH support
+- [ ] "Urgency"/"Demands attention" window state
 - [ ] Multi-monitor support
 - [ ] Support for adding new layouts
 - [ ] More built-in layouts: fullscreen, 3-column, ...
-- [ ] (partially implemented) ICCCM and EWMH support
-- [ ] Iron out issues with focus, window management, and general UX
+- [x] Iron out issues with focus, window management, and general UX
 
 # Installation
 
