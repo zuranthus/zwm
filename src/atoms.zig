@@ -1,5 +1,6 @@
 const x11 = @import("x11.zig");
 
+pub var utf8_string: x11.Atom = undefined;
 pub var zwm_main_factor: x11.Atom = undefined;
 pub var wm_protocols: x11.Atom = undefined;
 pub var wm_delete: x11.Atom = undefined;
@@ -14,13 +15,15 @@ pub var net_wm_window_type_dock: x11.Atom = undefined;
 pub var net_wm_window_type_dialog: x11.Atom = undefined;
 pub var net_wm_state: x11.Atom = undefined;
 pub var net_wm_state_fullscreen: x11.Atom = undefined;
-pub var net_wm_desktop : x11.Atom = undefined;
+pub var net_wm_desktop: x11.Atom = undefined;
 pub var net_number_of_desktops: x11.Atom = undefined;
 pub var net_current_desktop: x11.Atom = undefined;
 pub var net_active_window: x11.Atom = undefined;
-pub var net_client_list : x11.Atom = undefined;
+pub var net_client_list: x11.Atom = undefined;
+pub var net_supporting_wm_check: x11.Atom = undefined;
 
 pub fn init(d: *x11.Display) void {
+    utf8_string = x11.XInternAtom(d, "UTF8_STRING", 0);
     zwm_main_factor = x11.XInternAtom(d, "ZWM_MAIN_FACTOR", 0);
     wm_protocols = x11.XInternAtom(d, "WM_PROTOCOLS", 0);
     wm_delete = x11.XInternAtom(d, "WM_DELETE_WINDOW", 0);
@@ -40,6 +43,7 @@ pub fn init(d: *x11.Display) void {
     net_current_desktop = x11.XInternAtom(d, "_NET_CURRENT_DESKTOP", 0);
     net_active_window = x11.XInternAtom(d, "_NET_ACTIVE_WINDOW", 0);
     net_client_list = x11.XInternAtom(d, "_NET_CLIENT_LIST", 0);
+    net_supporting_wm_check = x11.XInternAtom(d, "_NET_SUPPORTING_WM_CHECK", 0);
 
     const supported_net_atoms = [_]x11.Atom{
         net_supported,
@@ -55,6 +59,7 @@ pub fn init(d: *x11.Display) void {
         net_current_desktop,
         net_active_window,
         net_client_list,
+        net_supporting_wm_check,
     };
     _ = x11.XChangeProperty(
         d,

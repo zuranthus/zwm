@@ -25,6 +25,7 @@ pub const Manager = struct {
 
     display: *x11.Display = undefined,
     root: x11.Window = undefined,
+    wmcheck_win: x11.Window = undefined,
     clients: ClientOwner = undefined,
     event_handler: EventHandler = undefined,
     monitor: Monitor = undefined,
@@ -39,6 +40,7 @@ pub const Manager = struct {
         if (!is_instance_alive) return;
 
         _ = x11.XUngrabKey(self.display, x11.AnyKey, x11.AnyModifier, x11.XDefaultRootWindow(self.display));
+        _ = x11.XDestroyWindow(self.display, self.wmcheck_win);
         self.monitor.deinit();
         self.event_handler.deinit();
         self.clients.deinit();
@@ -82,6 +84,44 @@ pub const Manager = struct {
             x11.XA_CARDINAL,
             self.monitor.workspaces.len,
         );
+
+        // Initialize the window manager check window
+        self.wmcheck_win = x11.XCreateSimpleWindow(
+            self.display,
+            root,
+            0,
+            0,
+            1,
+            1,
+            0,
+            0,
+            0,
+        );
+        x11.setWindowPropertyScalar(
+            self.display,
+            self.wmcheck_win,
+            atoms.net_supporting_wm_check,
+            x11.XA_WINDOW,
+            self.wmcheck_win,
+        );
+        _ = x11.XChangeProperty(
+            self.display,
+            self.wmcheck_win,
+            atoms.net_supporting_wm_check,
+            atoms.utf8_string,
+            8,
+            x11.PropModeReplace,
+            "zwm",
+            3,
+        );
+        x11.setWindowPropertyScalar(
+            self.display,
+            root,
+            atoms.net_supporting_wm_check,
+            x11.XA_WINDOW,
+            self.wmcheck_win,
+        );
+
 
         _ = x11.XDeleteProperty(self.display, root, atoms.net_client_list);
         self.manageExistingWindows();
