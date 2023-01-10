@@ -129,11 +129,13 @@ pub const api = struct {
     }
 };
 
-pub const MouseAction = enum { Move, Resize };
+pub const MouseAction = enum { Move, Resize, ToggleFloating };
 
-pub fn firstMatchingMouseAction(mouse_actions: anytype, button: u32, state: u32) ?MouseAction {
-    inline for (mouse_actions) |a|
-        if (button == a[2] and state ^ a[1] == 0)
+pub fn firstMatchingMouseAction(mouse_actions: anytype, button: u32, state: u32, client_floating: bool) ?MouseAction {
+    inline for (mouse_actions) |a| {
+        const action_available = client_floating or a[0] == MouseAction.ToggleFloating;
+        if (action_available and button == a[2] and state ^ a[1] == 0)
             return a[0];
+    }
     return null;
 }

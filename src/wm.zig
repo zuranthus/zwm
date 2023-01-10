@@ -873,15 +873,30 @@ const EventHandler = struct {
         const client = self.wm.findClientByWindow(ev.window) orelse @panic("Window is not a client");
         if (client != self.wm.focused_client) self.wm.focusClient(client);
 
-        // Only floating clients can be moved/resized
-        if (!client.is_floating or client.is_fullscreen) return;
+        // Ignore mouse events for fullscreen windows
+        if (client.is_fullscreen) return;
 
-        const mstate = &self.mouse_state;
-        mstate.action = commands.firstMatchingMouseAction(config.mouse_actions, ev.button, ev.state);
-        if (mstate.action != null) {
-            mstate.start_pos = Pos.init(ev.x_root, ev.y_root);
-            mstate.frame_pos = client.pos;
-            mstate.frame_size = client.size;
+        // TODO: refactor
+        if (commands.firstMatchingMouseAction(
+            config.mouse_actions,
+            ev.button,
+            ev.state,
+            client.is_floating,
+        )) |action| {
+            switch (action) {
+                .ToggleFloating => {
+                    client.is_floating = !client.is_floating;
+                    self.wm.markLayoutDirty();
+                },
+                else => {
+                    log.err("Mouse action: {}", .{action});
+                    const mstate = &self.mouse_state;
+                    mstate.action = action;
+                    mstate.start_pos = Pos.init(ev.x_root, ev.y_root);
+                    mstate.frame_pos = client.pos;
+                    mstate.frame_size = client.size;
+                },
+            }
         }
     }
 
@@ -928,6 +943,7 @@ const EventHandler = struct {
                 c.resize(new_size);
                 log.info("resized to ({}, {})", .{ c.size.x, c.size.y });
             },
+            else => {},
         }
     }
 
