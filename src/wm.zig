@@ -122,7 +122,6 @@ pub const Manager = struct {
             self.wmcheck_win,
         );
 
-
         _ = x11.XDeleteProperty(self.display, root, atoms.net_client_list);
         self.manageExistingWindows();
 
@@ -394,8 +393,10 @@ pub const Manager = struct {
     fn createClient(self: *Self, w: x11.Window, wa: *x11.XWindowAttributes) void {
         if (self.findClientByWindow(w) == null) {
             // Handle window type
-            var w_trans: x11.Window = undefined;
-            const is_transient = x11.XGetTransientForHint(self.display, w, &w_trans) != 0;
+            var transient_window: x11.Window = undefined;
+            const is_transient = x11.XGetTransientForHint(self.display, w, &transient_window) != 0;
+            var transient_parent: ?*Client = null;
+            if (is_transient) transient_parent = self.findClientByWindow(transient_window);
             const is_fullscreen =
                 x11.getWindowProperty(self.display, w, atoms.net_wm_state, x11.XA_ATOM, x11.Atom) ==
                 atoms.net_wm_state_fullscreen;
@@ -414,6 +415,10 @@ pub const Manager = struct {
                 wa.width,
                 wa.height,
             });
+            // Transient windows are centered on their parents
+            if (transient_parent) |parent| {
+                pos = parent.pos.addVec(parent.size.subVec(size).div(2));
+            }
             util.clipWindowPosSize(self.activeMonitor().origin, self.activeMonitor().size, &pos, &size);
 
             const new_node = self.clients.createNode();
@@ -428,12 +433,11 @@ pub const Manager = struct {
                 x11.EnterWindowMask | x11.PropertyChangeMask | x11.FocusChangeMask,
             );
 
-            // Add client
+            // Add client to a workspace:
+            // Transient windows appear on the same workspace as their parent
             var workspace_id: ?u8 = null;
-            // Transient windows appear on the same workspace as their parents
-            if (is_transient) {
-                if (self.findClientByWindow(w_trans)) |c_trans|
-                    workspace_id = c_trans.workspace_id;
+            if (transient_parent) |parent| {
+                workspace_id = parent.workspace_id;
             }
             // Otherwise, use the client's _NET_WM_DESKTOP property if it exists
             if (workspace_id == null) {

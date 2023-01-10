@@ -25,6 +25,10 @@ pub const IntVec2 = struct {
         return IntVec2{ .x = self.x - @intCast(i32, x), .y = self.y - @intCast(i32, y) };
     }
 
+    pub fn div(self: IntVec2, d: anytype) IntVec2 {
+        return IntVec2{ .x = @divTrunc(self.x, @intCast(i32, d)), .y = @divTrunc(self.y, @intCast(i32, d)) };
+    }
+
     pub fn eq(self: IntVec2, other: IntVec2) bool {
         return self.x == other.x and self.y == other.y;
     }
