@@ -54,4 +54,5 @@ pub const key_actions = .{
 pub const mouse_actions = .{
     .{ MouseAction.Move, mod_key, x11.Button1 },
     .{ MouseAction.Resize, mod_key, x11.Button3 },
+    .{ MouseAction.ToggleFloating, mod_key, x11.Button2 },
 };
