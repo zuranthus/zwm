@@ -169,9 +169,8 @@ pub const Manager = struct {
             const wid = @truncate(u8, id);
             if (wid < 9) workspace_id = wid;
         }
-        focusWorkspace(self, workspace_id);
-
-        log.info("Created and initialized wm", .{});
+        self.activateWorkspace(workspace_id);
+        self.applyFocus(self.getFirstFocusNode(workspace_id));
 
         while (self.exit_code == null) {
             if (self.layout_dirty) self.applyLayout();
@@ -191,6 +190,7 @@ pub const Manager = struct {
     }
 
     pub fn focusWorkspace(self: *Self, workspace_id: u8) void {
+        if (workspace_id == self.activeWorkspace().id) return;
         self.activateWorkspace(workspace_id);
         self.applyFocus(self.getFirstFocusNode(workspace_id));
     }
