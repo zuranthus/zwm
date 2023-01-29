@@ -625,6 +625,44 @@ pub const Manager = struct {
             );
     }
 
+    // Stack clients in the active workspace, with floating windows on top
+    fn restackClients(self: *Self) void {
+        // First restack floating windows. If there is a dock window, place the floating windows below it.
+        var sibling = self.dock_window orelse x11.None;
+        var it = self.clients.list.first;
+        while (it) |node| : (it = node.next) {
+            const c = node.data;
+            // Skip non-floating windows, as well as windows not on the active workspace.
+            if (!c.is_floating) continue;
+            if (c.monitor_id != self.activeMonitor().id or c.workspace_id != self.activeWorkspace().id) continue;
+
+            const value_mask: c_uint = if (sibling != x11.None) x11.CWStackMode | x11.CWSibling else x11.CWStackMode;
+            const stack_mode = if (sibling != x11.None) x11.Below else x11.Above;
+            var wc = std.mem.zeroInit( x11.XWindowChanges, .{ .sibling = sibling, .stack_mode = stack_mode });
+            _ = x11.XConfigureWindow(self.display, c.w, value_mask, &wc);
+            sibling = c.w;
+        }
+        // Then restack non-floating windows below the floating windows.
+        it = self.clients.list.first;
+        while (it) |node| : (it = node.next) {
+            const c = node.data;
+            // Skip floating and fullscreen windows, as well as windows not on the active workspace.
+            if (c.is_floating or c.is_fullscreen) continue;
+            if (c.monitor_id != self.activeMonitor().id or c.workspace_id != self.activeWorkspace().id) continue;
+
+            const value_mask: c_uint = if (sibling != x11.None) x11.CWStackMode | x11.CWSibling else x11.CWStackMode;
+            const stack_mode = if (sibling != x11.None) x11.Below else x11.Above;
+            var wc = std.mem.zeroInit( x11.XWindowChanges, .{ .sibling = sibling, .stack_mode = stack_mode });
+            _ = x11.XConfigureWindow(self.display, c.w, value_mask, &wc);
+            sibling = c.w;
+        }
+
+        // Put the fullscreen window on top of everything.
+        if (self.focused_client) |c| {
+            if (c.is_fullscreen) _ = x11.XRaiseWindow(self.display, c.w);
+        }
+    }
+
     fn applyLayout(self: *Self) void {
         log.trace("Apply layout", .{});
         const mon_id = self.activeMonitor().id;
@@ -650,6 +688,8 @@ pub const Manager = struct {
                 x11.hideWindow(self.display, c.w);
         }
         self.layout_dirty = false;
+
+        self.restackClients();
 
         // Skip EnterNotify events to avoid changing the focused window without delibarate mouse movement
         self.event_handler.skipEnterWindowEvents();
@@ -896,7 +936,7 @@ const EventHandler = struct {
                 },
             }
         }
-        // Raise floating windows on click
+        // Raise floating windows on mouse action
         if (client.is_floating) _ = x11.XRaiseWindow(self.display, client.w);
     }
 
