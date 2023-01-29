@@ -309,8 +309,6 @@ pub const Manager = struct {
             const c = &n.data;
             if (!c.is_fullscreen) c.setFocusedBorder(true);
             self.grabMouseButtons(c, ClientFocus.Focused);
-            if (c.is_floating)
-                _ = x11.XRaiseWindow(self.display, c.w);
             self.clients.moveNodeToFront(n);
             self.focused_client = c;
             c.setInputFocus();
@@ -898,6 +896,8 @@ const EventHandler = struct {
                 },
             }
         }
+        // Raise floating windows on click
+        if (client.is_floating) _ = x11.XRaiseWindow(self.display, client.w);
     }
 
     fn onButtonRelease(self: *Self, ev: x11.XButtonEvent) !void {
