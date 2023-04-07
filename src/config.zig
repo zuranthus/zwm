@@ -4,14 +4,14 @@ const api = commands.api;
 const MouseAction = commands.MouseAction;
 
 pub const border = struct {
-    pub const width = 3;
-    pub const gap = 5;
-    pub const color_normal = 0x808080;
-    pub const color_focused = 0xff8000;
+    pub const width = 2;
+    pub const gap = 7;
+    pub const color_normal = 0x403c3a;
+    pub const color_focused = 0xc18f41;
 };
 
 // Alt = Mod1Mask, Win = Mod4Mask
-pub const mod_key = x11.Mod1Mask;
+pub const mod_key = x11.Mod4Mask;
 
 pub const key_actions = .{
     .{ mod_key, x11.XK_H, api.decMaster, .{} },
